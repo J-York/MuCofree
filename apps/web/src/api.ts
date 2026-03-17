@@ -70,6 +70,36 @@ export type PlaylistSong = {
 
 export type HomeResponse = { users: User[] };
 
+// ── Paginated feed types ───────────────────────────────────────────────────────
+
+export type FeedShare = Share & {
+  userName: string;
+  userAvatarUrl: string | null;
+};
+
+export type FeedResponse = {
+  items: FeedShare[];
+  nextCursor: number | null;
+};
+
+export type UserWithPreview = {
+  id: number;
+  username: string;
+  name: string;
+  avatarUrl: string | null;
+  createdAt: string;
+  shareCount: number;
+  latestSongTitle: string | null;
+  latestSingerName: string | null;
+  recentCoverUrls: string[];
+};
+
+export type UsersResponse = {
+  users: UserWithPreview[];
+  total: number;
+  totalShares: number;
+};
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function apiRegister(input: {
@@ -121,6 +151,22 @@ export async function apiMe(): Promise<{ user: User | null }> {
 export async function apiHome(): Promise<HomeResponse> {
   const res = await fetch("/api/home", { method: "GET", credentials: "include" });
   return readJson<HomeResponse>(res);
+}
+
+export async function apiSharesFeed(cursor?: number | null, limit = 20): Promise<FeedResponse> {
+  const sp = new URLSearchParams();
+  sp.set("limit", String(limit));
+  if (cursor) sp.set("cursor", String(cursor));
+  const res = await fetch(`/api/shares/feed?${sp.toString()}`, { method: "GET", credentials: "include" });
+  return readJson<FeedResponse>(res);
+}
+
+export async function apiUsersList(offset = 0, limit = 20): Promise<UsersResponse> {
+  const sp = new URLSearchParams();
+  sp.set("limit", String(limit));
+  sp.set("offset", String(offset));
+  const res = await fetch(`/api/users?${sp.toString()}`, { method: "GET", credentials: "include" });
+  return readJson<UsersResponse>(res);
 }
 
 export async function apiGetUser(userId: number): Promise<{ user: User }> {

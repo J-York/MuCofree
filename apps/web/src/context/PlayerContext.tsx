@@ -67,6 +67,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setAudioUrl(url);
       if (newQueue) setQueue(newQueue);
       setCurrentIndex(idx);
+      setPlaying(true);
     } catch {
       setErrorMsg(`加载《${song.title}》失败`);
     } finally {
@@ -151,8 +152,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
-      void audio.play();
-      setPlaying(true);
+      void audio.play().then(() => {
+        setPlaying(true);
+      }).catch(() => {
+        setPlaying(false);
+      });
     } else {
       audio.pause();
       setPlaying(false);

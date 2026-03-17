@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiDeleteShare, apiHome, type Share, type User } from "../api";
+import {
+  apiDeleteShare,
+  apiSharesFeed,
+  apiUsersList,
+  type FeedShare,
+  type UserWithPreview
+} from "../api";
 import Avatar from "../components/Avatar";
 import { useAuth } from "../context/AuthContext";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
@@ -8,18 +14,28 @@ import { formatDateTime, safeUrl } from "../utils";
 
 type ViewMode = "songs" | "users";
 
-type ShareWithUser = Share & {
-  userName: string;
-  userAvatarUrl: string | null;
-};
+const PAGE_SIZE = 20;
 
 export default function PlazaPage() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("songs");
   const { currentSong, playing, play, togglePlayPause, loadingMid } = usePlayer();
   const { user: me } = useAuth();
+
+  // ── 歌曲动态（游标分页）─────────────────────────────────────────────────
+  const [feedItems, setFeedItems] = useState<FeedShare[]>([]);
+  const [feedCursor, setFeedCursor] = useState<number | null | undefined>(undefined); // undefined = not loaded
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [feedError, setFeedError] = useState<string | null>(null);
+  const [feedHasMore, setFeedHasMore] = useState(true);
+
+  // ── 分享者（偏移分页）──────────────────────────────────────────────────
+  const [userItems, setUserItems] = useState<UserWithPreview[]>([]);
+  const [userOffset, setUserOffset] = useState(0);
+  const [userTotal, setUserTotal] = useState(0);
+  const [totalShares, setTotalShares] = useState(0);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [usersHasMore, setUsersHasMore] = useState(true);
 
   // Toast
   const [toast, setToast] = useState<string | null>(null);
@@ -28,61 +44,61 @@ export default function PlazaPage() {
     setTimeout(() => setToast(null), 2500);
   }
 
-  async function loadUsers() {
-    setLoading(true);
-    setError(null);
+  // 首次加载
+  const initRef = useRef(false);
+  useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+    void loadFeed(null);
+    void loadUsers(0);
+  }, []);
+
+  async function loadFeed(cursor: number | null) {
+    setFeedLoading(true);
+    setFeedError(null);
     try {
-      const data = await apiHome();
-      setUsers(data.users);
+      const data = await apiSharesFeed(cursor, PAGE_SIZE);
+      setFeedItems((prev) => cursor === null ? data.items : [...prev, ...data.items]);
+      setFeedCursor(data.nextCursor);
+      setFeedHasMore(data.nextCursor !== null);
     } catch (e) {
-      setError((e as Error).message);
+      setFeedError((e as Error).message);
     } finally {
-      setLoading(false);
+      setFeedLoading(false);
     }
   }
 
-  useEffect(() => {
-    void loadUsers();
-  }, []);
+  async function loadUsers(offset: number) {
+    setUsersLoading(true);
+    setUsersError(null);
+    try {
+      const data = await apiUsersList(offset, PAGE_SIZE);
+      setUserItems((prev) => offset === 0 ? data.users : [...prev, ...data.users]);
+      setUserOffset(offset + data.users.length);
+      setUserTotal(data.total);
+      setTotalShares(data.totalShares);
+      setUsersHasMore(offset + data.users.length < data.total);
+    } catch (e) {
+      setUsersError((e as Error).message);
+    } finally {
+      setUsersLoading(false);
+    }
+  }
 
-  async function onDelete(sh: ShareWithUser) {
+  async function onDelete(sh: FeedShare) {
     if (!confirm(`确定撤回《${sh.songTitle ?? sh.songMid}》这条分享？`)) return;
     try {
       await apiDeleteShare(sh.id);
-      // Remove from users state so allShares recomputes
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === sh.userId
-            ? { ...u, shares: u.shares?.filter((s) => s.id !== sh.id) }
-            : u
-        )
-      );
+      setFeedItems((prev) => prev.filter((s) => s.id !== sh.id));
       showToast("已撤回分享");
     } catch (e) {
       showToast((e as Error).message);
     }
   }
 
-  // Flatten all shares with user info, sorted by newest first
-  const allShares = useMemo<ShareWithUser[]>(() => {
-    const list: ShareWithUser[] = [];
-    for (const u of users) {
-      if (!u.shares) continue;
-      for (const sh of u.shares) {
-        list.push({ ...sh, userName: u.name, userAvatarUrl: u.avatarUrl });
-      }
-    }
-    list.sort((a, b) => {
-      const da = new Date(a.createdAt).getTime();
-      const db = new Date(b.createdAt).getTime();
-      return db - da;
-    });
-    return list;
-  }, [users]);
+  const displayedShares = useMemo(() => feedItems.length, [feedItems]);
 
-  const totalShares = allShares.length;
-
-  function handlePlayShare(sh: ShareWithUser) {
+  function handlePlayShare(sh: FeedShare) {
     const song: PlayerSong = {
       mid: sh.songMid,
       title: sh.songTitle ?? sh.songMid,
@@ -108,7 +124,7 @@ export default function PlazaPage() {
             {totalShares} 首分享
           </span>
           <span className="badge badge-gold" style={{ background: "rgba(255,255,255,0.18)", color: "white" }}>
-            {users.length} 位分享者
+            {userTotal} 位分享者
           </span>
         </div>
       </div>
@@ -131,164 +147,174 @@ export default function PlazaPage() {
         </div>
       </div>
 
-      {/* Error */}
-      {error ? <div className="alert alert-error">{error}</div> : null}
-
       {/* Content */}
-      {loading ? (
-        <div className="empty-state">
-          <div className="spinner" style={{ width: 28, height: 28, borderWidth: 3 }} />
-        </div>
-      ) : view === "songs" ? (
-        /* ──── Song waterfall view ──── */
-        allShares.length ? (
-          <div className="masonry">
-            {allShares.map((sh) => {
-              const isActive = currentSong?.mid === sh.songMid;
-              const isLoadingThis = loadingMid === sh.songMid;
-              return (
-                <div key={sh.id} className="masonry-item">
-                  <div
-                    className={`plaza-share-card${isActive ? " plaza-share-card--active" : ""}`}
-                  >
-                    {/* Large cover */}
-                    <div className="plaza-share-cover-wrap" onClick={() => handlePlayShare(sh)}>
-                      {safeUrl(sh.coverUrl) ? (
-                        <img
-                          src={safeUrl(sh.coverUrl)!}
-                          alt={sh.songTitle ?? ""}
-                          className="plaza-share-cover"
-                          onError={(e) => {
-                            const img = e.currentTarget;
-                            img.style.display = "none";
-                            const placeholder = img.nextElementSibling as HTMLElement | null;
-                            if (placeholder) placeholder.style.display = "flex";
-                          }}
-                        />
-                      ) : null}
-                      <div className="plaza-share-cover-placeholder" style={safeUrl(sh.coverUrl) ? { display: "none" } : {}}>♪</div>
-                      {/* Play overlay */}
-                      <div className="plaza-share-play-overlay">
-                        {isLoadingThis ? (
-                          <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2, borderTopColor: "white", borderColor: "rgba(255,255,255,0.3)" }} />
-                        ) : (
-                          <span className="plaza-share-play-icon">
-                            {isActive && playing ? "▐▐" : "▶"}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+      {view === "songs" ? (
+        /* ──── 歌曲动态（游标分页）──── */
+        <div>
+          {feedError ? <div className="alert alert-error">{feedError}</div> : null}
 
-                    {/* Body */}
-                    <div className="plaza-share-body">
-                      {/* Song title + singer */}
-                      <div className="song-title truncate">{sh.songTitle ?? sh.songMid}</div>
-                      {sh.singerName ? (
-                        <div className="song-meta truncate">{sh.singerName}</div>
-                      ) : null}
-
-                      {/* Comment */}
-                      {sh.comment ? (
-                        <div className="share-comment">{sh.comment}</div>
-                      ) : null}
-
-                      {/* User + time */}
-                      <div className="plaza-share-footer">
-                        <Link to={`/user/${sh.userId}`} className="plaza-share-user">
-                          <Avatar name={sh.userName} avatarUrl={sh.userAvatarUrl} size="sm" />
-                          <div className="flex-1" style={{ minWidth: 0 }}>
-                            <div className="text-sm truncate" style={{ color: "var(--ink-mid)", fontWeight: 500 }}>{sh.userName}</div>
-                            <div className="text-xs">{formatDateTime(sh.createdAt)}</div>
-                          </div>
-                        </Link>
-                        {me && me.id === sh.userId ? (
-                          <button
-                            className="btn btn-sm btn-danger-ghost"
-                            style={{ flexShrink: 0 }}
-                            onClick={() => void onDelete(sh)}
-                          >
-                            撤回
-                          </button>
+          {feedItems.length > 0 ? (
+            <div className="masonry">
+              {feedItems.map((sh) => {
+                const isActive = currentSong?.mid === sh.songMid;
+                const isLoadingThis = loadingMid === sh.songMid;
+                return (
+                  <div key={sh.id} className="masonry-item">
+                    <div className={`plaza-share-card${isActive ? " plaza-share-card--active" : ""}`}>
+                      {/* Large cover */}
+                      <div className="plaza-share-cover-wrap" onClick={() => handlePlayShare(sh)}>
+                        {safeUrl(sh.coverUrl) ? (
+                          <img
+                            src={safeUrl(sh.coverUrl)!}
+                            alt={sh.songTitle ?? ""}
+                            className="plaza-share-cover"
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              img.style.display = "none";
+                              const placeholder = img.nextElementSibling as HTMLElement | null;
+                              if (placeholder) placeholder.style.display = "flex";
+                            }}
+                          />
                         ) : null}
+                        <div className="plaza-share-cover-placeholder" style={safeUrl(sh.coverUrl) ? { display: "none" } : {}}>♪</div>
+                        <div className="plaza-share-play-overlay">
+                          {isLoadingThis ? (
+                            <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2, borderTopColor: "white", borderColor: "rgba(255,255,255,0.3)" }} />
+                          ) : (
+                            <span className="plaza-share-play-icon">
+                              {isActive && playing ? "▐▐" : "▶"}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Body */}
+                      <div className="plaza-share-body">
+                        <div className="song-title truncate">{sh.songTitle ?? sh.songMid}</div>
+                        {sh.singerName ? <div className="song-meta truncate">{sh.singerName}</div> : null}
+                        {sh.comment ? <div className="share-comment">{sh.comment}</div> : null}
+
+                        <div className="plaza-share-footer">
+                          <Link to={`/user/${sh.userId}`} className="plaza-share-user">
+                            <Avatar name={sh.userName} avatarUrl={sh.userAvatarUrl} size="sm" />
+                            <div className="flex-1" style={{ minWidth: 0 }}>
+                              <div className="text-sm truncate" style={{ color: "var(--ink-mid)", fontWeight: 500 }}>{sh.userName}</div>
+                              <div className="text-xs">{formatDateTime(sh.createdAt)}</div>
+                            </div>
+                          </Link>
+                          {me && me.id === sh.userId ? (
+                            <button
+                              className="btn btn-sm btn-danger-ghost"
+                              style={{ flexShrink: 0 }}
+                              onClick={() => void onDelete(sh)}
+                            >
+                              撤回
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+          ) : !feedLoading ? (
+            <div className="empty-state">
+              <div className="empty-icon">🎵</div>
+              <div>还没有人分享音乐</div>
+              <div className="text-xs">登录后前往你的主页开始分享吧</div>
+            </div>
+          ) : null}
+
+          {/* 加载更多 */}
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+            {feedLoading ? (
+              <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
+            ) : feedHasMore ? (
+              <button
+                className="btn btn-secondary"
+                onClick={() => void loadFeed(feedCursor ?? null)}
+              >
+                加载更多（已显示 {displayedShares} 条）
+              </button>
+            ) : feedItems.length > 0 ? (
+              <span className="text-xs" style={{ color: "var(--ink-light)" }}>已加载全部 {displayedShares} 条分享</span>
+            ) : null}
           </div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-icon">🎵</div>
-            <div>还没有人分享音乐</div>
-            <div className="text-xs">登录后前往你的主页开始分享吧</div>
-          </div>
-        )
+        </div>
       ) : (
-        /* ──── User card view (original) ──── */
-        users.length ? (
-          <div className="grid-3">
-            {users.map((u) => (
-              <Link key={u.id} to={`/user/${u.id}`} className="user-card">
-                {/* Cover strip */}
-                {u.shares && u.shares.length > 0 ? (
-                  <div className="user-card-covers">
-                    {u.shares.slice(0, 3).map((sh) =>
-                      safeUrl(sh.coverUrl) ? (
-                        <img
-                          key={sh.id}
-                          src={safeUrl(sh.coverUrl)!}
-                          alt={sh.songTitle ?? ""}
-                          className="cover"
-                          style={{ flex: 1, height: 60, borderRadius: 6 }}
-                          onError={(e) => {
-                            const img = e.currentTarget;
-                            img.style.display = "none";
-                            const placeholder = img.nextElementSibling as HTMLElement | null;
-                            if (placeholder) placeholder.style.display = "flex";
-                          }}
-                        />
-                      ) : null
-                    )}
-                  </div>
-                ) : (
-                  <div
-                    className="cover-placeholder"
-                    style={{ height: 60, borderRadius: 8, width: "100%", fontSize: 22 }}
-                  >
-                    ♪
-                  </div>
-                )}
+        /* ──── 分享者（偏移分页）──── */
+        <div>
+          {usersError ? <div className="alert alert-error">{usersError}</div> : null}
 
-                {/* User info */}
-                <div className="row">
-                  <Avatar name={u.name} avatarUrl={u.avatarUrl} size="sm" />
-                  <div className="flex-1" style={{ minWidth: 0 }}>
-                    <div className="song-title truncate">{u.name}</div>
-                    <div className="song-meta">
-                      {u.shares?.length ?? 0} 首分享
+          {userItems.length > 0 ? (
+            <div className="grid-3">
+              {userItems.map((u) => (
+                <Link key={u.id} to={`/user/${u.id}`} className="user-card">
+                  {/* Cover strip */}
+                  {u.recentCoverUrls.length > 0 ? (
+                    <div className="user-card-covers">
+                      {u.recentCoverUrls.map((url, i) =>
+                        safeUrl(url) ? (
+                          <img
+                            key={i}
+                            src={safeUrl(url)!}
+                            alt=""
+                            className="cover"
+                            style={{ flex: 1, height: 60, borderRadius: 6 }}
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                          />
+                        ) : null
+                      )}
                     </div>
-                  </div>
-                  <span className="text-xs">›</span>
-                </div>
+                  ) : (
+                    <div className="cover-placeholder" style={{ height: 60, borderRadius: 8, width: "100%", fontSize: 22 }}>♪</div>
+                  )}
 
-                {/* Latest song preview */}
-                {u.shares && u.shares[0] ? (
-                  <div className="text-xs truncate" style={{ color: "var(--ink-light)" }}>
-                    最近：{u.shares[0].songTitle ?? u.shares[0].songMid}
-                    {u.shares[0].singerName ? ` · ${u.shares[0].singerName}` : ""}
+                  {/* User info */}
+                  <div className="row">
+                    <Avatar name={u.name} avatarUrl={u.avatarUrl} size="sm" />
+                    <div className="flex-1" style={{ minWidth: 0 }}>
+                      <div className="song-title truncate">{u.name}</div>
+                      <div className="song-meta">{u.shareCount} 首分享</div>
+                    </div>
+                    <span className="text-xs">›</span>
                   </div>
-                ) : null}
-              </Link>
-            ))}
+
+                  {/* Latest song preview */}
+                  {u.latestSongTitle ? (
+                    <div className="text-xs truncate" style={{ color: "var(--ink-light)" }}>
+                      最近：{u.latestSongTitle}
+                      {u.latestSingerName ? ` · ${u.latestSingerName}` : ""}
+                    </div>
+                  ) : null}
+                </Link>
+              ))}
+            </div>
+          ) : !usersLoading ? (
+            <div className="empty-state">
+              <div className="empty-icon">🎵</div>
+              <div>还没有人分享音乐</div>
+              <div className="text-xs">登录后前往你的主页开始分享吧</div>
+            </div>
+          ) : null}
+
+          {/* 加载更多 */}
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+            {usersLoading ? (
+              <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
+            ) : usersHasMore ? (
+              <button
+                className="btn btn-secondary"
+                onClick={() => void loadUsers(userOffset)}
+              >
+                加载更多（已显示 {userItems.length} / {userTotal} 位）
+              </button>
+            ) : userItems.length > 0 ? (
+              <span className="text-xs" style={{ color: "var(--ink-light)" }}>已显示全部 {userTotal} 位分享者</span>
+            ) : null}
           </div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-icon">🎵</div>
-            <div>还没有人分享音乐</div>
-            <div className="text-xs">登录后前往你的主页开始分享吧</div>
-          </div>
-        )
+        </div>
       )}
 
       {/* Toast */}
