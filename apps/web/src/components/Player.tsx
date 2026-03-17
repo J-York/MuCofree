@@ -93,6 +93,7 @@ export default function Player() {
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const lastAudioUrlRef = React.useRef<string | null>(null);
 
   const [coverError, setCoverError] = useState(false);
 
@@ -106,7 +107,8 @@ export default function Player() {
     const audio = audioRef.current;
     if (!audio || !audioUrl) return;
 
-    if (audio.src !== audioUrl) {
+    if (lastAudioUrlRef.current !== audioUrl) {
+      lastAudioUrlRef.current = audioUrl;
       audio.src = audioUrl;
       setCurrentTime(0);
       setDuration(0);
