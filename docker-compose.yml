@@ -1,0 +1,38 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    environment:
+      PORT: "3001"
+      DATABASE_PATH: "/data/app.sqlite"
+      QQMUSIC_BASE_URL: "${QQMUSIC_BASE_URL:-https://api.ygking.top}"
+      CORS_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:8080}"
+      SESSION_SECRET: "${SESSION_SECRET}"
+      SECURE_COOKIE: "${SECURE_COOKIE:-false}"
+      TRUST_PROXY: "${TRUST_PROXY:-true}"
+    volumes:
+      - mucofree_data:/data
+    expose:
+      - "3001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+volumes:
+  mucofree_data:

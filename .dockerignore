@@ -1,0 +1,12 @@
+.git
+node_modules
+apps/*/node_modules
+apps/*/dist
+apps/api/data/*.sqlite
+apps/api/data/*.sqlite-journal
+apps/api/data/*.sqlite-shm
+apps/api/data/*.sqlite-wal
+*.log
+.env
+.env.*
+!.env.example

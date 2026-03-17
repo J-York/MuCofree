@@ -223,11 +223,12 @@ function dbGetPlaylistEntry(db: Db, userId: number, songMid: string): PlaylistRo
 
 // ── App factory ────────────────────────────────────────────────────────────
 
-function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret: string, secureCookie: boolean) {
+function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret: string, secureCookie: boolean, trustProxy: boolean) {
   const qq = createQqMusicClient(qqBaseUrl);
 
   const app = express();
   app.disable("x-powered-by");
+  if (trustProxy) app.set("trust proxy", 1);
 
   app.use(
     cors({
@@ -896,7 +897,7 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
 
 const env = getEnv();
 const db = openDb(env.DATABASE_PATH);
-const app = createApp(db, env.QQMUSIC_BASE_URL, env.CORS_ORIGIN, env.SESSION_SECRET, env.SECURE_COOKIE);
+const app = createApp(db, env.QQMUSIC_BASE_URL, env.CORS_ORIGIN, env.SESSION_SECRET, env.SECURE_COOKIE, env.TRUST_PROXY);
 
 app.listen(env.PORT, () => {
   // eslint-disable-next-line no-console

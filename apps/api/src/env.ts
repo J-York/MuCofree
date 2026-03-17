@@ -24,7 +24,8 @@ const envSchema = z.object({
   QQMUSIC_BASE_URL: z.string().url().default("https://api.ygking.top"),
   CORS_ORIGIN: z.string().default("http://127.0.0.1:5173"),
   SESSION_SECRET: z.string().min(16),
-  SECURE_COOKIE: z.coerce.boolean().default(false)
+  SECURE_COOKIE: z.coerce.boolean().default(false),
+  TRUST_PROXY: z.coerce.boolean().default(false)
 });
 
 export type Env = z.infer<typeof envSchema>;
