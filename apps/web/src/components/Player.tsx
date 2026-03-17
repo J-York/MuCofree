@@ -109,9 +109,15 @@ export default function Player() {
 
     if (lastAudioUrlRef.current !== audioUrl) {
       lastAudioUrlRef.current = audioUrl;
+      audio.pause();
       audio.src = audioUrl;
+      audio.load();
       setCurrentTime(0);
       setDuration(0);
+    }
+
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      setDuration(audio.duration || 0);
     }
 
     void audio.play().catch(() => {
@@ -124,20 +130,27 @@ export default function Player() {
     if (!element) return;
     const audio = element;
 
-    function handleTimeUpdate() {
+    function syncTimeState() {
       setCurrentTime(audio.currentTime || 0);
+      setDuration(audio.duration || 0);
+    }
+
+    function handleTimeUpdate() {
+      syncTimeState();
     }
 
     function handleLoadedMetadata() {
-      setDuration(audio.duration || 0);
+      syncTimeState();
     }
 
     function handlePlay() {
       setPlayingState(true);
+      syncTimeState();
     }
 
     function handlePause() {
       setPlayingState(false);
+      syncTimeState();
     }
 
     function handleEnded() {
@@ -150,6 +163,8 @@ export default function Player() {
       setPlayingState(false);
       next();
     }
+
+    syncTimeState();
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
@@ -166,7 +181,7 @@ export default function Player() {
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [audioRef, next, playMode, setPlayingState]);
+  }, [audioRef, audioUrl, next, playMode, setPlayingState]);
 
   if (!currentSong && !loadingMid && !errorMsg) return null;
 
