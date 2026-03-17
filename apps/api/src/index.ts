@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { getEnv } from "./env.js";
 import { openDb, type Db } from "./db.js";
+import { SQLiteSessionStore } from "./session-store.js";
 import {
   createQqMusicClient,
   qqCover,
@@ -150,7 +151,7 @@ function dbGetPlaylistEntry(db: Db, userId: number, songMid: string): PlaylistRo
 
 // ── App factory ────────────────────────────────────────────────────────────
 
-function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret: string) {
+function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret: string, secureCookie: boolean) {
   const qq = createQqMusicClient(qqBaseUrl);
 
   const app = express();
@@ -165,13 +166,14 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
   app.use(express.json({ limit: "256kb" }));
   app.use(
     session({
+      store: new SQLiteSessionStore(db),
       secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
       cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
+        secure: secureCookie,
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       }
     })
@@ -526,7 +528,7 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
 
 const env = getEnv();
 const db = openDb(env.DATABASE_PATH);
-const app = createApp(db, env.QQMUSIC_BASE_URL, env.CORS_ORIGIN, env.SESSION_SECRET);
+const app = createApp(db, env.QQMUSIC_BASE_URL, env.CORS_ORIGIN, env.SESSION_SECRET, env.SECURE_COOKIE);
 
 app.listen(env.PORT, () => {
   // eslint-disable-next-line no-console
