@@ -279,7 +279,7 @@ export async function apiQqSearch(keyword: string, signal?: AbortSignal): Promis
       const singer = pickSinger(item);
       const { albumMid, albumName } = pickAlbum(item);
       const coverUrl = albumMid
-        ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg`
+        ? `/api/qq/cover-proxy?album_mid=${encodeURIComponent(albumMid)}`
         : undefined;
       return { mid, title, subtitle, singer, albumMid, albumName, coverUrl } as QqSong;
     })

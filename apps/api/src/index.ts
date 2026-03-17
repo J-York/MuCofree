@@ -351,6 +351,48 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
     }
   });
 
+  app.get("/api/qq/cover-proxy", async (req, res, next) => {
+    try {
+      const query = z
+        .object({
+          album_mid: z.string().min(1).max(100)
+        })
+        .parse(req.query);
+
+      const size = 300;
+      const imgUrl = `https://y.gtimg.cn/music/photo_new/T002R${size}x${size}M000${query.album_mid}.jpg`;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10_000);
+
+      try {
+        const imgRes = await fetch(imgUrl, {
+          headers: { "Referer": "https://y.qq.com/" },
+          signal: controller.signal
+        });
+
+        clearTimeout(timer);
+
+        if (!imgRes.ok) {
+          res.status(404).send("Cover not found");
+          return;
+        }
+
+        const contentType = imgRes.headers.get("content-type") ?? "image/jpeg";
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+
+        const buf = await imgRes.arrayBuffer();
+        res.send(Buffer.from(buf));
+      } catch (fetchErr) {
+        clearTimeout(timer);
+        throw fetchErr;
+      }
+    } catch (e) {
+      next(e);
+    }
+  });
+
   // ── Shares ───────────────────────────────────────────────────────────────
 
   app.post("/api/shares", requireAuth, (req, res, next) => {

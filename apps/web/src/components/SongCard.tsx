@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { safeUrl } from "../utils";
 import type { PlaylistSong, QqSong, Share } from "../api";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
@@ -70,6 +71,7 @@ export default function SongCard({
   const cover = getCoverUrl(item);
   const title = getTitle(item);
   const meta = getMeta(item);
+  const [coverError, setCoverError] = useState(false);
 
   const cardClass = [
     "song-card",
@@ -91,8 +93,8 @@ export default function SongCard({
     <div className={cardClass} onClick={handleCardClick} role="button" tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleCardClick(); }}>
       {/* Cover */}
-      {safeUrl(cover) ? (
-        <img src={safeUrl(cover)!} alt={title} width={44} height={44} className="cover" style={{ width: 44, height: 44 }} />
+      {safeUrl(cover) && !coverError ? (
+        <img src={safeUrl(cover)!} alt={title} width={44} height={44} className="cover" style={{ width: 44, height: 44 }} onError={() => setCoverError(true)} />
       ) : (
         <div className="cover-placeholder" style={{ width: 44, height: 44 }}>♪</div>
       )}

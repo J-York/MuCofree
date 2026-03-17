@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiHome, type Share, type User } from "../api";
+import { apiDeleteShare, apiHome, type Share, type User } from "../api";
 import Avatar from "../components/Avatar";
+import { useAuth } from "../context/AuthContext";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
 import { formatDateTime, safeUrl } from "../utils";
 
@@ -18,6 +19,14 @@ export default function PlazaPage() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("songs");
   const { currentSong, playing, play, togglePlayPause, loadingMid } = usePlayer();
+  const { user: me } = useAuth();
+
+  // Toast
+  const [toast, setToast] = useState<string | null>(null);
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2500);
+  }
 
   async function loadUsers() {
     setLoading(true);
@@ -35,6 +44,24 @@ export default function PlazaPage() {
   useEffect(() => {
     void loadUsers();
   }, []);
+
+  async function onDelete(sh: ShareWithUser) {
+    if (!confirm(`确定撤回《${sh.songTitle ?? sh.songMid}》这条分享？`)) return;
+    try {
+      await apiDeleteShare(sh.id);
+      // Remove from users state so allShares recomputes
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === sh.userId
+            ? { ...u, shares: u.shares?.filter((s) => s.id !== sh.id) }
+            : u
+        )
+      );
+      showToast("已撤回分享");
+    } catch (e) {
+      showToast((e as Error).message);
+    }
+  }
 
   // Flatten all shares with user info, sorted by newest first
   const allShares = useMemo<ShareWithUser[]>(() => {
@@ -131,10 +158,15 @@ export default function PlazaPage() {
                           src={safeUrl(sh.coverUrl)!}
                           alt={sh.songTitle ?? ""}
                           className="plaza-share-cover"
+                          onError={(e) => {
+                            const img = e.currentTarget;
+                            img.style.display = "none";
+                            const placeholder = img.nextElementSibling as HTMLElement | null;
+                            if (placeholder) placeholder.style.display = "flex";
+                          }}
                         />
-                      ) : (
-                        <div className="plaza-share-cover-placeholder">♪</div>
-                      )}
+                      ) : null}
+                      <div className="plaza-share-cover-placeholder" style={safeUrl(sh.coverUrl) ? { display: "none" } : {}}>♪</div>
                       {/* Play overlay */}
                       <div className="plaza-share-play-overlay">
                         {isLoadingThis ? (
@@ -161,13 +193,24 @@ export default function PlazaPage() {
                       ) : null}
 
                       {/* User + time */}
-                      <Link to={`/user/${sh.userId}`} className="plaza-share-user">
-                        <Avatar name={sh.userName} avatarUrl={sh.userAvatarUrl} size="sm" />
-                        <div className="flex-1" style={{ minWidth: 0 }}>
-                          <div className="text-sm truncate" style={{ color: "var(--ink-mid)", fontWeight: 500 }}>{sh.userName}</div>
-                          <div className="text-xs">{formatDateTime(sh.createdAt)}</div>
-                        </div>
-                      </Link>
+                      <div className="plaza-share-footer">
+                        <Link to={`/user/${sh.userId}`} className="plaza-share-user">
+                          <Avatar name={sh.userName} avatarUrl={sh.userAvatarUrl} size="sm" />
+                          <div className="flex-1" style={{ minWidth: 0 }}>
+                            <div className="text-sm truncate" style={{ color: "var(--ink-mid)", fontWeight: 500 }}>{sh.userName}</div>
+                            <div className="text-xs">{formatDateTime(sh.createdAt)}</div>
+                          </div>
+                        </Link>
+                        {me && me.id === sh.userId ? (
+                          <button
+                            className="btn btn-sm btn-danger-ghost"
+                            style={{ flexShrink: 0 }}
+                            onClick={() => void onDelete(sh)}
+                          >
+                            撤回
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -198,16 +241,14 @@ export default function PlazaPage() {
                           alt={sh.songTitle ?? ""}
                           className="cover"
                           style={{ flex: 1, height: 60, borderRadius: 6 }}
+                          onError={(e) => {
+                            const img = e.currentTarget;
+                            img.style.display = "none";
+                            const placeholder = img.nextElementSibling as HTMLElement | null;
+                            if (placeholder) placeholder.style.display = "flex";
+                          }}
                         />
-                      ) : (
-                        <div
-                          key={sh.id}
-                          className="cover-placeholder"
-                          style={{ flex: 1, height: 60, borderRadius: 6, fontSize: 20 }}
-                        >
-                          ♪
-                        </div>
-                      )
+                      ) : null
                     )}
                   </div>
                 ) : (
@@ -249,6 +290,24 @@ export default function PlazaPage() {
           </div>
         )
       )}
+
+      {/* Toast */}
+      {toast ? (
+        <div
+          className="alert alert-success"
+          style={{
+            position: "fixed",
+            bottom: 96,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 300,
+            boxShadow: "var(--shadow-float)",
+            whiteSpace: "nowrap"
+          }}
+        >
+          {toast}
+        </div>
+      ) : null}
     </div>
   );
 }

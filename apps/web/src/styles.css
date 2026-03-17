@@ -1232,6 +1232,15 @@ button {
   padding: 4px 0;
   transition: var(--transition);
   border-radius: var(--radius-sm);
+  flex: 1;
+  min-width: 0;
+}
+
+.plaza-share-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .plaza-share-user:hover {

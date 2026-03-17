@@ -94,6 +94,14 @@ export default function Player() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
+  const [coverError, setCoverError] = useState(false);
+
+  // Reset cover error whenever song changes
+  const coverSrc = currentSong?.coverUrl;
+  React.useEffect(() => {
+    setCoverError(false);
+  }, [coverSrc]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !audioUrl) return;
@@ -164,7 +172,7 @@ export default function Player() {
     <div className="player-bar">
       <div className="player-inner">
         <div className="player-song-info">
-          {currentSong?.coverUrl && safeUrl(currentSong.coverUrl) ? (
+          {currentSong?.coverUrl && safeUrl(currentSong.coverUrl) && !coverError ? (
             <img
               src={safeUrl(currentSong.coverUrl)!}
               alt={currentSong.title}
@@ -172,6 +180,7 @@ export default function Player() {
               height={42}
               className="cover"
               style={{ width: 42, height: 42, borderRadius: 8, flexShrink: 0 }}
+              onError={() => setCoverError(true)}
             />
           ) : (
             <div className="cover-placeholder" style={{ width: 42, height: 42, fontSize: 16, flexShrink: 0 }}>
