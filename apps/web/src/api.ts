@@ -238,6 +238,29 @@ export async function apiRemoveFromPlaylist(songMid: string): Promise<{ ok: bool
   return readJson<{ ok: boolean }>(res);
 }
 
+// ── Daily Recommendation ──────────────────────────────────────────────────────
+
+export type DailySong = {
+  mid: string;
+  title: string;
+  subtitle: string;
+  singerName: string;
+  albumMid: string;
+  albumName: string;
+  coverUrl: string;
+};
+
+export type DailyRecommendResponse = {
+  songs: DailySong[];
+  seedDate: string;
+  sourceTopIds: number[];
+};
+
+export async function apiRecommendDaily(): Promise<DailyRecommendResponse> {
+  const res = await fetch("/api/recommend/daily", { method: "GET", credentials: "include" });
+  return readJson<DailyRecommendResponse>(res);
+}
+
 // ── QQ Music helpers ──────────────────────────────────────────────────────────
 
 export type QqSong = {
