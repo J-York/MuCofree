@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   apiCreateShare,
   apiGetPlaylist,
@@ -26,6 +26,7 @@ export default function HomePage() {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [results, setResults] = useState<QqSong[]>([]);
+  const searchAbortRef = useRef<AbortController | null>(null);
 
   // Playlist
   const [playlist, setPlaylist] = useState<PlaylistSong[]>([]);
@@ -67,19 +68,30 @@ export default function HomePage() {
     e.preventDefault();
     const kw = keyword.trim();
     if (!kw) return;
+
+    // Cancel previous in-flight search
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+
     setSearching(true);
     setSearchError(null);
     setResults([]);
     try {
-      const list = await apiQqSearch(kw);
+      const list = await apiQqSearch(kw, controller.signal);
       setResults(list);
       if (!list.length) setSearchError("没有搜到歌曲，换个关键词试试");
     } catch (err) {
+      if ((err as DOMException).name === "AbortError") return;
       setSearchError((err as Error).message);
     } finally {
-      setSearching(false);
+      if (!controller.signal.aborted) {
+        setSearching(false);
+      }
     }
   }
+
+  const playlistMids = new Set(playlist.map((s) => s.songMid));
 
   async function addToPlaylist(song: QqSong) {
     try {
@@ -246,11 +258,11 @@ export default function HomePage() {
                     playing={isCurrentSong(song.mid) && playing && currentSong?.mid === song.mid}
                     loading={isLoading(song.mid)}
                     onPlay={playSearchSong}
-                    action={{
-                      label: "+ 歌单",
-                      onClick: () => void addToPlaylist(song),
-                      variant: "btn-teal-ghost"
-                    }}
+                    action={
+                      playlistMids.has(song.mid)
+                        ? { label: "已收藏", onClick: () => {}, variant: "btn-teal-ghost", disabled: true }
+                        : { label: "+ 歌单", onClick: () => void addToPlaylist(song), variant: "btn-teal-ghost" }
+                    }
                   />
                 ))}
               </div>

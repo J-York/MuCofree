@@ -48,7 +48,7 @@ type Props = {
   loading?: boolean;
   onPlay?: (song: PlayerSong) => void;
   /** Secondary action button label + handler */
-  action?: { label: string; onClick: () => void; variant?: string };
+  action?: { label: string; onClick: () => void; variant?: string; disabled?: boolean };
   /** Tertiary action (e.g. delete) */
   secondAction?: { label: string; onClick: () => void };
   /** Click on the whole card */
@@ -126,6 +126,7 @@ export default function SongCard({
           <button
             className={`btn btn-sm ${action.variant ?? "btn-secondary"}`}
             onClick={action.onClick}
+            disabled={action.disabled}
           >
             {action.label}
           </button>

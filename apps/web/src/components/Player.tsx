@@ -240,9 +240,8 @@ export default function Player() {
           <span className="player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
           <audio
             ref={audioRef as React.RefObject<HTMLAudioElement>}
-            controls
             onEmptied={() => setPlayingState(false)}
-            style={{ display: audioUrl ? undefined : "none" }}
+            style={{ display: "none" }}
           />
           {queue.length > 1 ? <span className="text-xs">{currentIndex + 1} / {queue.length}</span> : null}
         </div>

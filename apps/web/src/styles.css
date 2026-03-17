@@ -1089,6 +1089,156 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Plaza View Toggle
+═══════════════════════════════════════════════════════════════ */
+.plaza-view-toggle {
+  display: inline-flex;
+  background: var(--cream-dark);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+}
+
+.plaza-view-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-light);
+  cursor: pointer;
+  transition: var(--transition);
+  font-family: var(--font-sans);
+}
+
+.plaza-view-btn:hover {
+  color: var(--ink-mid);
+}
+
+.plaza-view-btn.active {
+  background: white;
+  color: var(--teal);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(26, 18, 8, 0.08);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Masonry / Waterfall Layout
+═══════════════════════════════════════════════════════════════ */
+.masonry {
+  columns: 3;
+  column-gap: 16px;
+}
+
+.masonry-item {
+  break-inside: avoid;
+  margin-bottom: 16px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Plaza Share Card (waterfall item)
+═══════════════════════════════════════════════════════════════ */
+.plaza-share-card {
+  background: white;
+  border: 1px solid var(--warm-200);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  transition: var(--transition);
+}
+
+.plaza-share-card:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+  border-color: var(--warm-300);
+}
+
+.plaza-share-card--active {
+  border-color: var(--gold);
+}
+
+.plaza-share-cover-wrap {
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.plaza-share-cover {
+  width: 100%;
+  display: block;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+
+.plaza-share-cover-placeholder {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: linear-gradient(135deg, var(--warm-100), var(--warm-200));
+  display: grid;
+  place-items: center;
+  color: var(--ink-ghost);
+  font-size: 36px;
+}
+
+.plaza-share-play-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.plaza-share-cover-wrap:hover .plaza-share-play-overlay {
+  opacity: 1;
+}
+
+.plaza-share-card--active .plaza-share-play-overlay {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.plaza-share-play-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(45, 106, 106, 0.9);
+  color: white;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  backdrop-filter: blur(4px);
+}
+
+.plaza-share-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plaza-share-body .share-comment {
+  margin-top: 4px;
+}
+
+.plaza-share-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  text-decoration: none;
+  color: inherit;
+  padding: 4px 0;
+  transition: var(--transition);
+  border-radius: var(--radius-sm);
+}
+
+.plaza-share-user:hover {
+  opacity: 0.8;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Misc utilities
 ═══════════════════════════════════════════════════════════════ */
 .truncate {
@@ -1111,6 +1261,10 @@ button {
 /* ═══════════════════════════════════════════════════════════════
    Responsive
 ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  .masonry { columns: 2; }
+}
+
 @media (max-width: 640px) {
   .container { padding: 0 16px; }
   .section-card { padding: 20px 16px; }
@@ -1126,5 +1280,11 @@ button {
   .page-content { padding: 20px 0 100px; }
   .grid-2 { grid-template-columns: 1fr; }
   .grid-3 { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .masonry { columns: 2; column-gap: 12px; }
+  .masonry-item { margin-bottom: 12px; }
   .login-card { padding: 28px 20px; }
+}
+
+@media (max-width: 400px) {
+  .masonry { columns: 1; }
 }

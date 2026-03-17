@@ -4,6 +4,7 @@ import {
   apiDeleteShare,
   apiGetUser,
   apiAddToPlaylist,
+  apiGetPlaylist,
   apiUserShares,
   type Share,
   type User
@@ -29,6 +30,8 @@ export default function UserPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [playlistMids, setPlaylistMids] = useState<Set<string>>(new Set());
+
   // Toast
   const [toast, setToast] = useState<string | null>(null);
 
@@ -46,9 +49,13 @@ export default function UserPage() {
     setLoading(true);
     setError(null);
     try {
-      const [u, s] = await Promise.all([apiGetUser(userId), apiUserShares(userId)]);
-      setProfileUser(u.user);
-      setShares(s.shares);
+      const [uRes, sRes] = await Promise.all([apiGetUser(userId), apiUserShares(userId)]);
+      setProfileUser(uRes.user);
+      setShares(sRes.shares);
+      if (me && me.id !== userId) {
+        const plRes = await apiGetPlaylist();
+        setPlaylistMids(new Set(plRes.songs.map((s) => s.songMid)));
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -83,6 +90,7 @@ export default function UserPage() {
         albumName: share.albumName,
         coverUrl: share.coverUrl
       });
+      setPlaylistMids((prev) => new Set([...prev, share.songMid]));
       showToast(`已添加《${share.songTitle ?? share.songMid}》到我的歌单`);
     } catch (e) {
       showToast((e as Error).message);
@@ -178,7 +186,9 @@ export default function UserPage() {
                     onPlay={playSong}
                     action={
                       !isOwner && me
-                        ? { label: "+ 歌单", onClick: () => void addToPlaylist(sh), variant: "btn-teal-ghost" }
+                        ? playlistMids.has(sh.songMid)
+                          ? { label: "已收藏", onClick: () => {}, variant: "btn-teal-ghost", disabled: true }
+                          : { label: "+ 歌单", onClick: () => void addToPlaylist(sh), variant: "btn-teal-ghost" }
                         : undefined
                     }
                     secondAction={

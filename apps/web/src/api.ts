@@ -259,18 +259,18 @@ function extractSongList(payload: any): any[] {
   return [];
 }
 
-export async function apiQqSearch(keyword: string): Promise<QqSong[]> {
+export async function apiQqSearch(keyword: string, signal?: AbortSignal): Promise<QqSong[]> {
   const sp = new URLSearchParams();
   sp.set("keyword", keyword);
   sp.set("type", "song");
   sp.set("num", "20");
 
-  const res = await fetch(`/api/qq/search?${sp.toString()}`, { credentials: "include" });
+  const res = await fetch(`/api/qq/search?${sp.toString()}`, { credentials: "include", signal });
   const payload = await readJson<any>(res);
 
   const list = extractSongList(payload);
 
-  const parsed = list
+  return list
     .map((item: any) => {
       const mid = pickMid(item);
       const title = pickTitle(item);
@@ -278,24 +278,12 @@ export async function apiQqSearch(keyword: string): Promise<QqSong[]> {
       const subtitle = pickSubtitle(item);
       const singer = pickSinger(item);
       const { albumMid, albumName } = pickAlbum(item);
-      return { mid, title, subtitle, singer, albumMid, albumName } as QqSong;
+      const coverUrl = albumMid
+        ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg`
+        : undefined;
+      return { mid, title, subtitle, singer, albumMid, albumName, coverUrl } as QqSong;
     })
     .filter((s: QqSong | null): s is QqSong => s !== null);
-
-  const coverPromises = parsed.map(async (song) => {
-    if (!song.albumMid) return song;
-    try {
-      const coverRes = await fetch(`/api/qq/song/cover?album_mid=${song.albumMid}&size=300`, {
-        credentials: "include"
-      });
-      const coverPayload = await readJson<any>(coverRes);
-      return { ...song, coverUrl: pickString(coverPayload?.data) };
-    } catch {
-      return song;
-    }
-  });
-
-  return Promise.all(coverPromises);
 }
 
 export async function apiQqSongUrl(mid: string, quality = "320"): Promise<string | null> {

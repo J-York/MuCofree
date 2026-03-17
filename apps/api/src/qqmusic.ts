@@ -13,18 +13,33 @@ export function createQqMusicClient(baseUrl: string): QqMusicClient {
   return { baseUrl };
 }
 
+const UPSTREAM_TIMEOUT_MS = 10_000;
+
 async function getJson(url: string): Promise<unknown> {
-  const res = await fetch(url, {
-    method: "GET",
-    headers: { "accept": "application/json" }
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Upstream request failed: ${res.status} ${res.statusText}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "accept": "application/json" },
+      signal: controller.signal
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Upstream request failed: ${res.status} ${res.statusText}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+    }
+
+    return res.json();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Upstream request timed out after ${UPSTREAM_TIMEOUT_MS}ms: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-
-  return res.json();
 }
 
 export async function qqSearch(
