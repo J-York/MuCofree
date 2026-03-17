@@ -11,7 +11,8 @@ import {
   createQqMusicClient,
   qqCover,
   qqSearch,
-  qqSongUrl
+  qqSongUrl,
+  qqTop
 } from "./qqmusic.js";
 
 // ── Row types ──────────────────────────────────────────────────────────────
@@ -66,6 +67,18 @@ function httpError(status: number, message: string) {
   const err = new Error(message) as Error & { status?: number };
   err.status = status;
   return err;
+}
+
+const SHARE_ALREADY_EXISTS_MESSAGE = "这首歌已经分享过了";
+
+function isUniqueConstraintError(err: unknown, constraint: string) {
+  if (!(err instanceof Error)) return false;
+
+  const sqliteCode = (err as Error & { code?: unknown }).code;
+  return (
+    sqliteCode === "SQLITE_CONSTRAINT_UNIQUE" ||
+    err.message.includes(`UNIQUE constraint failed: ${constraint}`)
+  );
 }
 
 function parseIntParam(v: string): number {
@@ -127,6 +140,10 @@ function dbGetUserByUsername(db: Db, username: string): UserRow | undefined {
 
 function dbGetShare(db: Db, id: number): ShareRow | undefined {
   return db.prepare("SELECT * FROM shares WHERE id = ?").get(id) as ShareRow | undefined;
+}
+
+function dbGetUserShareBySongMid(db: Db, userId: number, songMid: string): ShareRow | undefined {
+  return db.prepare("SELECT * FROM shares WHERE user_id = ? AND song_mid = ?").get(userId, songMid) as ShareRow | undefined;
 }
 
 function dbAllUsers(db: Db): UserRow[] {
@@ -466,6 +483,8 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
         .parse(req.body);
 
       const userId = req.session.userId!;
+      const existingShare = dbGetUserShareBySongMid(db, userId, body.songMid);
+      if (existingShare) throw httpError(409, SHARE_ALREADY_EXISTS_MESSAGE);
 
       const info = db.prepare(
         `INSERT INTO shares (user_id, song_mid, song_title, song_subtitle, singer_name, album_mid, album_name, cover_url, comment)
@@ -485,6 +504,10 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
       const row = dbGetShare(db, Number(info.lastInsertRowid));
       res.status(201).json({ share: mapShare(row!) });
     } catch (e) {
+      if (isUniqueConstraintError(e, "shares.user_id, shares.song_mid")) {
+        next(httpError(409, SHARE_ALREADY_EXISTS_MESSAGE));
+        return;
+      }
       next(e);
     }
   });
@@ -644,6 +667,204 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
       const info = db.prepare("DELETE FROM playlist WHERE user_id = ? AND song_mid = ?").run(userId, songMid);
       if (info.changes === 0) throw httpError(404, "Song not in playlist");
       res.json({ ok: true });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── Daily Recommendation ─────────────────────────────────────────────────
+
+  app.get("/api/recommend/daily", requireAuth, async (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+
+      // Deterministic seed from userId + date
+      function makeSeed(uid: number, date: string): number {
+        let h = 0;
+        const str = `${uid}:${date}`;
+        for (let i = 0; i < str.length; i++) {
+          h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+        }
+        return Math.abs(h);
+      }
+
+      // Seeded pseudo-random float in [0, 1)
+      function seededRand(seed: number, index: number): number {
+        let s = seed ^ (index * 2654435761);
+        s = Math.imul(s ^ (s >>> 16), 0x45d9f3b);
+        s = Math.imul(s ^ (s >>> 16), 0x45d9f3b);
+        s = (s ^ (s >>> 16)) >>> 0;
+        return s / 0x100000000;
+      }
+
+      // Shuffle array in-place using seed
+      function seededShuffle<T>(arr: T[], seed: number): T[] {
+        const a = [...arr];
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(seededRand(seed, i) * (i + 1));
+          [a[i], a[j]] = [a[j]!, a[i]!];
+        }
+        return a;
+      }
+
+      // Normalize a songInfoList item into a standard song shape
+      type NormalizedSong = {
+        mid: string;
+        title: string;
+        subtitle: string;
+        singerName: string;
+        albumMid: string;
+        albumName: string;
+        coverUrl: string;
+      };
+
+      function normalizeFromSongInfo(item: any): NormalizedSong | null {
+        const mid = item?.mid;
+        const title = item?.title || item?.name;
+        if (!mid || !title) return null;
+        const singers: any[] = Array.isArray(item?.singer) ? item.singer : [];
+        const singerName = singers.map((s: any) => s?.name || "").filter(Boolean).join(", ");
+        const albumMid = item?.album?.mid ?? "";
+        const albumName = item?.album?.name ?? item?.album?.title ?? "";
+        const coverUrl = albumMid
+          ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}_1.jpg`
+          : "";
+        return {
+          mid,
+          title,
+          subtitle: item?.subtitle ?? "",
+          singerName,
+          albumMid,
+          albumName,
+          coverUrl
+        };
+      }
+
+      // Normalize from lightweight top song entry (data.data.song[])
+      function normalizeFromTopSong(item: any): NormalizedSong | null {
+        const title = item?.title;
+        const singerName = item?.singerName ?? "";
+        const albumMid = item?.albumMid ?? "";
+        const songId = item?.songId;
+        if (!title || songId == null) return null;
+        const coverUrl = item?.cover || (albumMid
+          ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}_1.jpg`
+          : "");
+        return {
+          mid: String(songId),
+          title,
+          subtitle: "",
+          singerName,
+          albumMid,
+          albumName: "",
+          coverUrl
+        };
+      }
+
+      const seed = makeSeed(userId, today);
+      const RECOMMEND_COUNT = 20;
+      const TOPS_TO_USE = 3;
+      const SONGS_PER_TOP = 20;
+
+      // Step 1: Fetch top catalog
+      const catalogPayload = await qqTop(qq) as any;
+      const groups: any[] = catalogPayload?.data?.group ?? [];
+      const allTopIds: number[] = [];
+      for (const g of groups) {
+        const toplist: any[] = g?.toplist ?? [];
+        for (const t of toplist) {
+          if (t?.topId != null) allTopIds.push(t.topId);
+        }
+      }
+
+      if (allTopIds.length === 0) {
+        res.json({ songs: [], seedDate: today, sourceTopIds: [] });
+        return;
+      }
+
+      // Step 2: Select a few tops using seed (different per user+day)
+      const shuffledTopIds = seededShuffle(allTopIds, seed);
+      const selectedTopIds = shuffledTopIds.slice(0, TOPS_TO_USE);
+
+      // Step 3: Fetch songs from selected tops in parallel
+      const topResults = await Promise.allSettled(
+        selectedTopIds.map((id) => qqTop(qq, { id, num: SONGS_PER_TOP }))
+      );
+
+      const candidateSongs: NormalizedSong[] = [];
+      for (const result of topResults) {
+        if (result.status !== "fulfilled") continue;
+        const payload = result.value as any;
+        const songInfoList: any[] = payload?.data?.songInfoList ?? [];
+        const lightSongs: any[] = payload?.data?.data?.song ?? [];
+
+        if (songInfoList.length > 0) {
+          for (const item of songInfoList) {
+            const s = normalizeFromSongInfo(item);
+            if (s) candidateSongs.push(s);
+          }
+        } else {
+          for (const item of lightSongs) {
+            const s = normalizeFromTopSong(item);
+            if (s) candidateSongs.push(s);
+          }
+        }
+      }
+
+      // Step 4: Load user's existing playlist and shares for personalization
+      const userPlaylist = dbUserPlaylist(db, userId);
+      const userShares = dbUserShares(db, userId);
+
+      const ownedMids = new Set<string>([
+        ...userPlaylist.map((s) => s.song_mid),
+        ...userShares.map((s) => s.song_mid)
+      ]);
+
+      // Count singer preference from playlist and shares
+      const singerCounts = new Map<string, number>();
+      const countSinger = (name: string | null) => {
+        if (!name) return;
+        singerCounts.set(name, (singerCounts.get(name) ?? 0) + 1);
+      };
+      userPlaylist.forEach((s) => countSinger(s.singer_name));
+      userShares.forEach((s) => countSinger(s.singer_name));
+
+      // Step 5: Filter out already owned songs and deduplicate by mid
+      const seenMids = new Set<string>();
+      const filtered = candidateSongs.filter((s) => {
+        if (ownedMids.has(s.mid) || seenMids.has(s.mid)) return false;
+        seenMids.add(s.mid);
+        return true;
+      });
+
+      // Step 6: Score each candidate
+      type ScoredSong = NormalizedSong & { score: number };
+      const scored: ScoredSong[] = filtered.map((s, i) => {
+        let score = seededRand(seed, i + 1000);
+        const matchCount = singerCounts.get(s.singerName) ?? 0;
+        score += matchCount * 0.3;
+        return { ...s, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      const top = scored.slice(0, RECOMMEND_COUNT);
+
+      // Step 7: Stable-shuffle final list so preferred artists aren't always first
+      const finalList = seededShuffle(top, seed + 7);
+
+      const songs = finalList.map((s) => ({
+        mid: s.mid,
+        title: s.title,
+        subtitle: s.subtitle,
+        singerName: s.singerName,
+        albumMid: s.albumMid,
+        albumName: s.albumName,
+        coverUrl: s.coverUrl
+      }));
+
+      res.json({ songs, seedDate: today, sourceTopIds: selectedTopIds });
     } catch (e) {
       next(e);
     }

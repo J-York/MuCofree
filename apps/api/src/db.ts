@@ -16,6 +16,26 @@ type ExistingUserRow = {
   created_at: string;
 };
 
+function ensureUniqueSharesPerSong(db: Db) {
+  const migrateShares = db.transaction(() => {
+    // Keep the newest share when historical duplicates exist.
+    db.exec(`
+      DELETE FROM shares
+      WHERE id IN (
+        SELECT older.id
+        FROM shares older
+        JOIN shares newer
+          ON older.user_id = newer.user_id
+         AND older.song_mid = newer.song_mid
+         AND older.id < newer.id
+      )
+    `);
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_user_id_song_mid ON shares(user_id, song_mid)");
+  });
+
+  migrateShares();
+}
+
 function ensureUsersAuthColumns(db: Db) {
   const columns = db.prepare("PRAGMA table_info(users)").all() as TableInfoRow[];
   const columnNames = new Set(columns.map((column) => column.name));
@@ -128,6 +148,7 @@ export function openDb(databasePath: string): Db {
   `);
 
   ensureUsersAuthColumns(db);
+  ensureUniqueSharesPerSong(db);
 
   return db;
 }
