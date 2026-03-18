@@ -111,8 +111,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             void fetchAndPlay(q[randIdx]!, randIdx);
           }
         } else {
-          const nextIdx = idx + 1;
-          if (nextIdx < q.length) void fetchAndPlay(q[nextIdx]!, nextIdx);
+          const nextIdx = idx + 1 >= q.length ? 0 : idx + 1;
+          void fetchAndPlay(q[nextIdx]!, nextIdx);
         }
         return q;
       });
