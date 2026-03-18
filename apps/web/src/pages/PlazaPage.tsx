@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  apiAddToPlaylist,
   apiDeleteShare,
+  apiGetPlaylist,
   apiSharesFeed,
   apiUsersList,
   type FeedShare,
@@ -37,6 +39,11 @@ export default function PlazaPage() {
   const [usersError, setUsersError] = useState<string | null>(null);
   const [usersHasMore, setUsersHasMore] = useState(true);
 
+  // ── 我的歌单状态（用于“已收藏”判定）────────────────────────────────────
+  const [playlistMids, setPlaylistMids] = useState<Set<string>>(new Set());
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [addingMids, setAddingMids] = useState<Set<string>>(new Set());
+
   // Toast
   const [toast, setToast] = useState<string | null>(null);
   function showToast(msg: string) {
@@ -52,6 +59,14 @@ export default function PlazaPage() {
     void loadFeed(null);
     void loadUsers(0);
   }, []);
+
+  useEffect(() => {
+    if (!me) {
+      setPlaylistMids(new Set());
+      return;
+    }
+    void loadPlaylistMids();
+  }, [me?.id]);
 
   async function loadFeed(cursor: number | null) {
     setFeedLoading(true);
@@ -82,6 +97,45 @@ export default function PlazaPage() {
       setUsersError((e as Error).message);
     } finally {
       setUsersLoading(false);
+    }
+  }
+
+  async function loadPlaylistMids() {
+    setPlaylistLoading(true);
+    try {
+      const data = await apiGetPlaylist();
+      setPlaylistMids(new Set(data.songs.map((s) => s.songMid)));
+    } catch {
+      setPlaylistMids(new Set());
+    } finally {
+      setPlaylistLoading(false);
+    }
+  }
+
+  async function addToPlaylist(sh: FeedShare) {
+    if (playlistMids.has(sh.songMid) || addingMids.has(sh.songMid)) return;
+
+    setAddingMids((prev) => new Set([...prev, sh.songMid]));
+    try {
+      await apiAddToPlaylist({
+        songMid: sh.songMid,
+        songTitle: sh.songTitle,
+        songSubtitle: sh.songSubtitle,
+        singerName: sh.singerName,
+        albumMid: sh.albumMid,
+        albumName: sh.albumName,
+        coverUrl: sh.coverUrl
+      });
+      setPlaylistMids((prev) => new Set([...prev, sh.songMid]));
+      showToast(`已添加《${sh.songTitle ?? sh.songMid}》到我的歌单`);
+    } catch (e) {
+      showToast((e as Error).message);
+    } finally {
+      setAddingMids((prev) => {
+        const next = new Set(prev);
+        next.delete(sh.songMid);
+        return next;
+      });
     }
   }
 
@@ -158,6 +212,10 @@ export default function PlazaPage() {
               {feedItems.map((sh) => {
                 const isActive = currentSong?.mid === sh.songMid;
                 const isLoadingThis = loadingMid === sh.songMid;
+                const isOwner = !!me && me.id === sh.userId;
+                const canAddToPlaylist = !!me && me.id !== sh.userId;
+                const inPlaylist = playlistMids.has(sh.songMid);
+                const isAdding = addingMids.has(sh.songMid);
                 return (
                   <div key={sh.id} className="masonry-item">
                     <div className={`plaza-share-card${isActive ? " plaza-share-card--active" : ""}`}>
@@ -202,7 +260,16 @@ export default function PlazaPage() {
                               <div className="text-xs">{formatDateTime(sh.createdAt)}</div>
                             </div>
                           </Link>
-                          {me && me.id === sh.userId ? (
+                          {canAddToPlaylist ? (
+                            <button
+                              className="btn btn-sm btn-teal-ghost"
+                              style={{ flexShrink: 0 }}
+                              onClick={() => void addToPlaylist(sh)}
+                              disabled={inPlaylist || isAdding || playlistLoading}
+                            >
+                              {inPlaylist ? "已收藏" : isAdding ? "添加中…" : "+ 歌单"}
+                            </button>
+                          ) : isOwner ? (
                             <button
                               className="btn btn-sm btn-danger-ghost"
                               style={{ flexShrink: 0 }}

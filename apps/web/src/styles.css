@@ -1126,7 +1126,8 @@ button {
    Masonry / Waterfall Layout
 ═══════════════════════════════════════════════════════════════ */
 .masonry {
-  columns: 3;
+  /* Auto-adaptive columns: increase column count as container grows */
+  column-width: 280px;
   column-gap: 16px;
 }
 
@@ -1270,10 +1271,6 @@ button {
 /* ═══════════════════════════════════════════════════════════════
    Responsive
 ═══════════════════════════════════════════════════════════════ */
-@media (max-width: 900px) {
-  .masonry { columns: 2; }
-}
-
 @media (max-width: 640px) {
   .container { padding: 0 16px; }
   .section-card { padding: 20px 16px; }
@@ -1289,7 +1286,12 @@ button {
   .page-content { padding: 20px 0 100px; }
   .grid-2 { grid-template-columns: 1fr; }
   .grid-3 { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
-  .masonry { columns: 2; column-gap: 12px; }
+
+  /* tighter spacing on small screens */
+  .masonry {
+    column-gap: 12px;
+    column-width: 220px;
+  }
   .masonry-item { margin-bottom: 12px; }
   .login-card { padding: 28px 20px; }
 }
