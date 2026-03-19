@@ -82,6 +82,8 @@ export default function Player() {
     loadingMid,
     errorMsg,
     playMode,
+    canPrev,
+    canNext,
     next,
     prev,
     playIndex,
@@ -90,7 +92,6 @@ export default function Player() {
     cyclePlayMode,
     audioRef
   } = usePlayer();
-
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const lastAudioUrlRef = React.useRef<string | null>(null);
@@ -224,7 +225,7 @@ export default function Player() {
             {playMode === "repeat-one" ? <RepeatOneIcon /> : playMode === "shuffle" ? <ShuffleIcon /> : <SequentialIcon />}
           </button>
 
-          <button className="ctrl-btn" onClick={prev} disabled={currentIndex <= 0} title="上一首">
+          <button className="ctrl-btn" onClick={prev} disabled={!canPrev} title="上一首">
             <PrevIcon />
           </button>
 
@@ -255,7 +256,7 @@ export default function Player() {
           <button
             className="ctrl-btn"
             onClick={next}
-            disabled={playMode === "shuffle" ? queue.length <= 1 : currentIndex >= queue.length - 1}
+            disabled={!canNext}
             title="下一首"
           >
             <NextIcon />

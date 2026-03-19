@@ -63,12 +63,60 @@ declare module "express-session" {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+type DailyRecommendSong = {
+  mid: string;
+  title: string;
+  subtitle: string;
+  singerName: string;
+  albumMid: string;
+  albumName: string;
+  coverUrl: string;
+};
+
+type DailyRecommendCacheEntry = {
+  songs: DailyRecommendSong[];
+  seedDate: string;
+  sourceTopIds: number[];
+  generatedAt: string;
+  expiresAt: number;
+};
+
+const dailyRecommendCache = new Map<string, DailyRecommendCacheEntry>();
+const DAILY_RECOMMEND_REFRESH_COOLDOWN_MS = 10_000;
+const DAILY_RECOMMEND_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const DAILY_RECOMMEND_CACHE_MAX_ENTRIES = 2_000;
+
+function dailyRecommendCacheKey(userId: number, seedDate: string) {
+  return `${userId}:${seedDate}`;
+}
+
+function pruneDailyRecommendCache(now: number) {
+  for (const [key, entry] of dailyRecommendCache) {
+    if (entry.expiresAt <= now) {
+      dailyRecommendCache.delete(key);
+    }
+  }
+
+  while (dailyRecommendCache.size > DAILY_RECOMMEND_CACHE_MAX_ENTRIES) {
+    const oldestKey = dailyRecommendCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    dailyRecommendCache.delete(oldestKey);
+  }
+}
+
+function splitSingerNames(value: string | null | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[、,，/&·]+/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
 function httpError(status: number, message: string) {
   const err = new Error(message) as Error & { status?: number };
   err.status = status;
   return err;
 }
-
 const SHARE_ALREADY_EXISTS_MESSAGE = "这首歌已经分享过了";
 
 function isUniqueConstraintError(err: unknown, constraint: string) {
@@ -654,33 +702,63 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
         body.coverUrl ?? null
       );
 
-      const row = db.prepare("SELECT * FROM playlist WHERE user_id = ? AND song_mid = ?").get(userId, body.songMid) as PlaylistRow;
-      res.status(info.changes > 0 ? 201 : 200).json({ song: mapPlaylist(row) });
+      if (info.changes === 0) {
+        const existing = db.prepare(
+          "SELECT * FROM playlist WHERE user_id = ? AND song_mid = ?"
+        ).get(userId, body.songMid) as PlaylistRow | undefined;
+
+        res.status(200).json({ song: existing ? mapPlaylist(existing) : null });
+        return;
+      }
+
+      const created = db.prepare(
+        "SELECT * FROM playlist WHERE id = ?"
+      ).get(Number(info.lastInsertRowid)) as PlaylistRow | undefined;
+
+      res.status(201).json({ song: created ? mapPlaylist(created) : null });
     } catch (e) {
       next(e);
     }
   });
 
-  app.delete("/api/playlist/:songMid", requireAuth, (req, res, next) => {
-    try {
-      const userId = req.session.userId!;
-      const { songMid } = req.params;
-      const info = db.prepare("DELETE FROM playlist WHERE user_id = ? AND song_mid = ?").run(userId, songMid);
-      if (info.changes === 0) throw httpError(404, "Song not in playlist");
-      res.json({ ok: true });
-    } catch (e) {
-      next(e);
+  app.delete("/api/playlist/:songMid", requireAuth, (req, res) => {
+    const userId = req.session.userId!;
+    const songMid = req.params.songMid;
+    const info = db
+      .prepare("DELETE FROM playlist WHERE user_id = ? AND song_mid = ?")
+      .run(userId, songMid);
+    if (info.changes === 0) {
+      res.status(404).json({ error: { message: "Song not found in playlist" } });
+      return;
     }
+    res.json({ ok: true });
   });
 
-  // ── Daily Recommendation ─────────────────────────────────────────────────
+  // ── Daily recommend ───────────────────────────────────────────────────────
 
   app.get("/api/recommend/daily", requireAuth, async (req, res, next) => {
     try {
       const userId = req.session.userId!;
-      const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+      const now = Date.now();
+      pruneDailyRecommendCache(now);
+      const today = new Date(now).toISOString().slice(0, 10);
+      const cacheKey = dailyRecommendCacheKey(userId, today);
+      const forceRefresh = req.query.refresh === "1";
+      const cached = dailyRecommendCache.get(cacheKey);
+      const hasFreshCache = Boolean(cached && cached.expiresAt > now);
 
-      // Deterministic seed from userId + date
+      if (hasFreshCache && !forceRefresh) {
+        res.json(cached);
+        return;
+      }
+
+      if (forceRefresh && cached) {
+        const ageMs = now - Date.parse(cached.generatedAt);
+        if (Number.isFinite(ageMs) && ageMs < DAILY_RECOMMEND_REFRESH_COOLDOWN_MS) {
+          throw httpError(429, "刷新过于频繁，请稍后再试");
+        }
+      }
+
       function makeSeed(uid: number, date: string): number {
         let h = 0;
         const str = `${uid}:${date}`;
@@ -690,7 +768,6 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
         return Math.abs(h);
       }
 
-      // Seeded pseudo-random float in [0, 1)
       function seededRand(seed: number, index: number): number {
         let s = seed ^ (index * 2654435761);
         s = Math.imul(s ^ (s >>> 16), 0x45d9f3b);
@@ -699,7 +776,6 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
         return s / 0x100000000;
       }
 
-      // Shuffle array in-place using seed
       function seededShuffle<T>(arr: T[], seed: number): T[] {
         const a = [...arr];
         for (let i = a.length - 1; i > 0; i--) {
@@ -709,32 +785,27 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
         return a;
       }
 
-      // Normalize a songInfoList item into a standard song shape
-      type NormalizedSong = {
-        mid: string;
-        title: string;
-        subtitle: string;
-        singerName: string;
-        albumMid: string;
-        albumName: string;
-        coverUrl: string;
-      };
+      type NormalizedSong = DailyRecommendSong;
 
       function normalizeFromSongInfo(item: any): NormalizedSong | null {
-        const mid = item?.mid;
-        const title = item?.title || item?.name;
+        const mid = typeof item?.mid === "string" ? item.mid.trim() : "";
+        const title = typeof item?.title === "string" ? item.title.trim() : typeof item?.name === "string" ? item.name.trim() : "";
         if (!mid || !title) return null;
         const singers: any[] = Array.isArray(item?.singer) ? item.singer : [];
         const singerName = singers.map((s: any) => s?.name || "").filter(Boolean).join(", ");
-        const albumMid = item?.album?.mid ?? "";
-        const albumName = item?.album?.name ?? item?.album?.title ?? "";
+        const albumMid = typeof item?.album?.mid === "string" ? item.album.mid : "";
+        const albumName = typeof item?.album?.name === "string"
+          ? item.album.name
+          : typeof item?.album?.title === "string"
+            ? item.album.title
+            : "";
         const coverUrl = albumMid
           ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}_1.jpg`
           : "";
         return {
           mid,
           title,
-          subtitle: item?.subtitle ?? "",
+          subtitle: typeof item?.subtitle === "string" ? item.subtitle : "",
           singerName,
           albumMid,
           albumName,
@@ -742,137 +813,202 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
         };
       }
 
-      // Normalize from lightweight top song entry (data.data.song[])
       function normalizeFromTopSong(item: any): NormalizedSong | null {
-        const title = item?.title;
-        const singerName = item?.singerName ?? "";
-        const albumMid = item?.albumMid ?? "";
-        const songId = item?.songId;
-        if (!title || songId == null) return null;
-        const coverUrl = item?.cover || (albumMid
+        const mid = typeof item?.mid === "string"
+          ? item.mid.trim()
+          : typeof item?.songMid === "string"
+            ? item.songMid.trim()
+            : typeof item?.songInfo?.mid === "string"
+              ? item.songInfo.mid.trim()
+              : "";
+        const title = typeof item?.title === "string"
+          ? item.title.trim()
+          : typeof item?.name === "string"
+            ? item.name.trim()
+            : typeof item?.songName === "string"
+              ? item.songName.trim()
+              : "";
+        if (!mid || !title) return null;
+        const singers = Array.isArray(item?.singer)
+          ? item.singer
+          : Array.isArray(item?.singerName)
+            ? item.singerName
+            : Array.isArray(item?.songInfo?.singer)
+              ? item.songInfo.singer
+              : [];
+        const singerName = singers
+          .map((s: any) => typeof s === "string" ? s : s?.name || "")
+          .filter(Boolean)
+          .join(", ");
+        const albumMid = typeof item?.albumMid === "string"
+          ? item.albumMid
+          : typeof item?.album?.mid === "string"
+            ? item.album.mid
+            : typeof item?.songInfo?.album?.mid === "string"
+              ? item.songInfo.album.mid
+              : "";
+        const albumName = typeof item?.albumName === "string"
+          ? item.albumName
+          : typeof item?.album?.name === "string"
+            ? item.album.name
+            : typeof item?.songInfo?.album?.name === "string"
+              ? item.songInfo.album.name
+              : "";
+        const coverUrl = albumMid
           ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}_1.jpg`
-          : "");
+          : "";
         return {
-          mid: String(songId),
+          mid,
           title,
-          subtitle: "",
+          subtitle: typeof item?.subtitle === "string"
+            ? item.subtitle
+            : typeof item?.songInfo?.subtitle === "string"
+              ? item.songInfo.subtitle
+              : "",
           singerName,
           albumMid,
-          albumName: "",
+          albumName,
           coverUrl
         };
       }
 
-      const seed = makeSeed(userId, today);
-      const RECOMMEND_COUNT = 20;
-      const TOPS_TO_USE = 3;
-      const SONGS_PER_TOP = 20;
+      const seedSalt = forceRefresh ? Math.floor(now / DAILY_RECOMMEND_REFRESH_COOLDOWN_MS) : 0;
+      const seed = makeSeed(userId, `${today}:${seedSalt}`);
+      const recommendCount = 20;
+      const topsToUse = 3;
+      const songsPerTop = 20;
+      const maxExtraTops = 1;
 
-      // Step 1: Fetch top catalog
       const catalogPayload = await qqTop(qq) as any;
-      const groups: any[] = catalogPayload?.data?.group ?? [];
+      const groups: any[] = Array.isArray(catalogPayload?.data?.group) ? catalogPayload.data.group : [];
       const allTopIds: number[] = [];
-      for (const g of groups) {
-        const toplist: any[] = g?.toplist ?? [];
-        for (const t of toplist) {
-          if (t?.topId != null) allTopIds.push(t.topId);
+      for (const group of groups) {
+        const toplist: any[] = Array.isArray(group?.toplist) ? group.toplist : [];
+        for (const top of toplist) {
+          if (typeof top?.topId === "number") allTopIds.push(top.topId);
         }
       }
 
       if (allTopIds.length === 0) {
-        res.json({ songs: [], seedDate: today, sourceTopIds: [] });
+        const payload: DailyRecommendCacheEntry = {
+          songs: [],
+          seedDate: today,
+          sourceTopIds: [],
+          generatedAt: new Date(now).toISOString(),
+          expiresAt: now + DAILY_RECOMMEND_CACHE_TTL_MS
+        };
+        dailyRecommendCache.set(cacheKey, payload);
+        pruneDailyRecommendCache(now);
+        res.json(payload);
         return;
       }
 
-      // Step 2: Select a few tops using seed (different per user+day)
-      const shuffledTopIds = seededShuffle(allTopIds, seed);
-      const selectedTopIds = shuffledTopIds.slice(0, TOPS_TO_USE);
+      const userPlaylist = dbUserPlaylist(db, userId);
+      const userShares = dbUserShares(db, userId);
+      const ownedMids = new Set<string>([
+        ...userPlaylist.map((song) => song.song_mid),
+        ...userShares.map((song) => song.song_mid)
+      ]);
 
-      // Step 3: Fetch songs from selected tops in parallel
-      const topResults = await Promise.allSettled(
-        selectedTopIds.map((id) => qqTop(qq, { id, num: SONGS_PER_TOP }))
-      );
+      const singerCounts = new Map<string, number>();
+      const countSinger = (name: string | null, weight: number) => {
+        for (const singer of splitSingerNames(name)) {
+          singerCounts.set(singer, (singerCounts.get(singer) ?? 0) + weight);
+        }
+      };
+      userPlaylist.forEach((song) => countSinger(song.singer_name, 1));
+      userShares.forEach((song) => countSinger(song.singer_name, 2));
 
+      const shuffledTopIds = seededShuffle([...new Set(allTopIds)], seed);
+      const selectedTopIds = shuffledTopIds.slice(0, topsToUse);
+      const sourceTopIds = [...selectedTopIds];
       const candidateSongs: NormalizedSong[] = [];
-      for (const result of topResults) {
-        if (result.status !== "fulfilled") continue;
-        const payload = result.value as any;
-        const songInfoList: any[] = payload?.data?.songInfoList ?? [];
-        const lightSongs: any[] = payload?.data?.data?.song ?? [];
+      const fetchedTopIds = new Set<number>();
 
-        if (songInfoList.length > 0) {
-          for (const item of songInfoList) {
-            const s = normalizeFromSongInfo(item);
-            if (s) candidateSongs.push(s);
+      async function appendTopCandidates(topIds: number[]) {
+        const pendingIds = topIds.filter((id) => !fetchedTopIds.has(id));
+        if (!pendingIds.length) return;
+        const topResults = await Promise.allSettled(
+          pendingIds.map((id) => qqTop(qq, { id, num: songsPerTop }))
+        );
+        topResults.forEach((result, index) => {
+          const topId = pendingIds[index]!;
+          fetchedTopIds.add(topId);
+          if (result.status !== "fulfilled") return;
+          const payload = result.value as any;
+          const songInfoList: any[] = Array.isArray(payload?.data?.songInfoList) ? payload.data.songInfoList : [];
+          const fallbackSongList: any[] = Array.isArray(payload?.data?.songList)
+            ? payload.data.songList
+            : Array.isArray(payload?.data?.song)
+              ? payload.data.song
+              : [];
+          const normalizedSongs = songInfoList.length
+            ? songInfoList.map((item) => normalizeFromSongInfo(item))
+            : fallbackSongList.map((item) => normalizeFromTopSong(item));
+          for (const song of normalizedSongs) {
+            if (song) candidateSongs.push(song);
           }
-        } else {
-          for (const item of lightSongs) {
-            const s = normalizeFromTopSong(item);
-            if (s) candidateSongs.push(s);
-          }
+        });
+      }
+
+      await appendTopCandidates(selectedTopIds);
+
+      if (candidateSongs.length < recommendCount) {
+        const extraTopIds = shuffledTopIds
+          .slice(topsToUse, topsToUse + maxExtraTops)
+          .filter((id) => !sourceTopIds.includes(id));
+        if (extraTopIds.length) {
+          sourceTopIds.push(...extraTopIds);
+          await appendTopCandidates(extraTopIds);
         }
       }
 
-      // Step 4: Load user's existing playlist and shares for personalization
-      const userPlaylist = dbUserPlaylist(db, userId);
-      const userShares = dbUserShares(db, userId);
-
-      const ownedMids = new Set<string>([
-        ...userPlaylist.map((s) => s.song_mid),
-        ...userShares.map((s) => s.song_mid)
-      ]);
-
-      // Count singer preference from playlist and shares
-      const singerCounts = new Map<string, number>();
-      const countSinger = (name: string | null) => {
-        if (!name) return;
-        singerCounts.set(name, (singerCounts.get(name) ?? 0) + 1);
-      };
-      userPlaylist.forEach((s) => countSinger(s.singer_name));
-      userShares.forEach((s) => countSinger(s.singer_name));
-
-      // Step 5: Filter out already owned songs and deduplicate by mid
       const seenMids = new Set<string>();
-      const filtered = candidateSongs.filter((s) => {
-        if (ownedMids.has(s.mid) || seenMids.has(s.mid)) return false;
-        seenMids.add(s.mid);
+      const filtered = candidateSongs.filter((song) => {
+        if (!song.mid || ownedMids.has(song.mid) || seenMids.has(song.mid)) return false;
+        seenMids.add(song.mid);
         return true;
       });
 
-      // Step 6: Score each candidate
       type ScoredSong = NormalizedSong & { score: number };
-      const scored: ScoredSong[] = filtered.map((s, i) => {
-        let score = seededRand(seed, i + 1000);
-        const matchCount = singerCounts.get(s.singerName) ?? 0;
-        score += matchCount * 0.3;
-        return { ...s, score };
+      const scored: ScoredSong[] = filtered.map((song, index) => {
+        let score = seededRand(seed, index + 1000);
+        let singerScore = 0;
+        for (const singer of splitSingerNames(song.singerName)) {
+          singerScore += singerCounts.get(singer) ?? 0;
+        }
+        score += singerScore * 0.3;
+        return { ...song, score };
       });
 
       scored.sort((a, b) => b.score - a.score);
-
-      const top = scored.slice(0, RECOMMEND_COUNT);
-
-      // Step 7: Stable-shuffle final list so preferred artists aren't always first
+      const top = scored.slice(0, recommendCount);
       const finalList = seededShuffle(top, seed + 7);
+      const payload: DailyRecommendCacheEntry = {
+        songs: finalList.map((song) => ({
+          mid: song.mid,
+          title: song.title,
+          subtitle: song.subtitle,
+          singerName: song.singerName,
+          albumMid: song.albumMid,
+          albumName: song.albumName,
+          coverUrl: song.coverUrl
+        })),
+        seedDate: today,
+        sourceTopIds,
+        generatedAt: new Date(now).toISOString(),
+        expiresAt: now + DAILY_RECOMMEND_CACHE_TTL_MS
+      };
 
-      const songs = finalList.map((s) => ({
-        mid: s.mid,
-        title: s.title,
-        subtitle: s.subtitle,
-        singerName: s.singerName,
-        albumMid: s.albumMid,
-        albumName: s.albumName,
-        coverUrl: s.coverUrl
-      }));
-
-      res.json({ songs, seedDate: today, sourceTopIds: selectedTopIds });
-    } catch (e) {
-      next(e);
+      dailyRecommendCache.set(cacheKey, payload);
+      pruneDailyRecommendCache(now);
+      res.json(payload);
+    } catch (err) {
+      next(err);
     }
   });
 
   // ── Error handler ─────────────────────────────────────────────────────────
-
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (err instanceof z.ZodError) {
       res.status(400).json({

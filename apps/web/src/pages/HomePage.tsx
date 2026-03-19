@@ -18,6 +18,7 @@ import SongCard from "../components/SongCard";
 
 type Tab = "search" | "playlist" | "daily";
 const ALREADY_SHARED_MESSAGE = "这首歌已经分享过了";
+const DAILY_REFRESH_COOLDOWN_MS = 10_000;
 
 export default function HomePage() {
   const { user } = useAuth();
@@ -52,6 +53,8 @@ export default function HomePage() {
   const [dailyLoading, setDailyLoading] = useState(false);
   const [dailyError, setDailyError] = useState<string | null>(null);
   const [dailyDate, setDailyDate] = useState<string | null>(null);
+  const [dailyRefreshLockedUntil, setDailyRefreshLockedUntil] = useState<number>(0);
+  const [dailyRefreshLocked, setDailyRefreshLocked] = useState(false);
   const dailyLoadedRef = useRef(false);
 
   // Toast
@@ -78,6 +81,20 @@ export default function HomePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  useEffect(() => {
+    if (dailyRefreshLockedUntil <= Date.now()) {
+      setDailyRefreshLocked(false);
+      return;
+    }
+
+    setDailyRefreshLocked(true);
+    const timer = window.setTimeout(() => {
+      setDailyRefreshLocked(false);
+    }, dailyRefreshLockedUntil - Date.now());
+
+    return () => window.clearTimeout(timer);
+  }, [dailyRefreshLockedUntil]);
 
   async function loadPlaylist() {
     setPlaylistLoading(true);
@@ -106,13 +123,16 @@ export default function HomePage() {
     }
   }
 
-  async function loadDaily() {
+  async function loadDaily(refresh = false) {
     setDailyLoading(true);
     setDailyError(null);
     try {
-      const data = await apiRecommendDaily();
+      const data = await apiRecommendDaily(refresh);
       setDailySongs(data.songs);
       setDailyDate(data.seedDate);
+      if (refresh) {
+        setDailyRefreshLockedUntil(Date.now() + DAILY_REFRESH_COOLDOWN_MS);
+      }
     } catch (e) {
       setDailyError((e as Error).message);
     } finally {
@@ -121,8 +141,9 @@ export default function HomePage() {
   }
 
   function refreshDaily() {
+    if (dailyLoading || dailyRefreshLocked) return;
     dailyLoadedRef.current = false;
-    void loadDaily().then(() => {
+    void loadDaily(true).then(() => {
       dailyLoadedRef.current = true;
     });
   }
@@ -483,7 +504,7 @@ export default function HomePage() {
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={refreshDaily}
-                disabled={dailyLoading}
+                disabled={dailyLoading || dailyRefreshLocked}
               >
                 {dailyLoading ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : "刷新"}
               </button>

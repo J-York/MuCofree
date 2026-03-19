@@ -256,8 +256,9 @@ export type DailyRecommendResponse = {
   sourceTopIds: number[];
 };
 
-export async function apiRecommendDaily(): Promise<DailyRecommendResponse> {
-  const res = await fetch("/api/recommend/daily", { method: "GET", credentials: "include" });
+export async function apiRecommendDaily(refresh = false): Promise<DailyRecommendResponse> {
+  const url = refresh ? "/api/recommend/daily?refresh=1" : "/api/recommend/daily";
+  const res = await fetch(url, { method: "GET", credentials: "include" });
   return readJson<DailyRecommendResponse>(res);
 }
 
