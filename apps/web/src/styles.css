@@ -15,6 +15,12 @@
   --brown-light:  #F5EDE6;
   --gold:         #C9974A;
   --gold-light:   #FDF3E3;
+  --gold-border:  #F0DDB8;
+  --gold-ink:     #8B6430;
+  --banner-badge-bg: rgba(255, 255, 255, 0.18);
+  --banner-badge-text: rgba(255, 255, 255, 0.96);
+  --avatar-placeholder-border: rgba(255, 255, 255, 0.4);
+  --avatar-placeholder-text: rgba(255, 255, 255, 0.96);
   --ink:          #1A1208;
   --ink-mid:      #3D2E1E;
   --ink-light:    #7A6A56;
@@ -52,6 +58,12 @@
   --brown-light:  #3D2E1E;
   --gold:         #D4A860;
   --gold-light:   #3D2E1E;
+  --gold-border:  #6A4E2A;
+  --gold-ink:     #F0D6A6;
+  --banner-badge-bg: rgba(255, 255, 255, 0.14);
+  --banner-badge-text: rgba(255, 255, 255, 0.96);
+  --avatar-placeholder-border: rgba(255, 255, 255, 0.16);
+  --avatar-placeholder-text: rgba(255, 255, 255, 0.92);
   --ink:          #EAEAEA;
   --ink-mid:      #B5A898;
   --ink-light:    #7A6A56;

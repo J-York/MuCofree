@@ -423,9 +423,15 @@ export default function HomePage() {
             ) : null}
 
             {shareSong ? (
-              <div className="card-sm stack-sm mb-16" style={{ background: "var(--gold-light)", borderColor: "#f0ddb8" }}>
+              <div
+                className="card-sm stack-sm mb-16"
+                style={{
+                  background: "var(--gold-light)",
+                  borderColor: "var(--gold-border)"
+                }}
+              >
                 <div className="row-between">
-                  <div className="section-label" style={{ color: "#8B6430" }}>分享到广场</div>
+                  <div className="section-label" style={{ color: "var(--gold-ink)" }}>分享到广场</div>
                   <button className="btn btn-ghost btn-sm" onClick={cancelShare}>
                     取消
                   </button>

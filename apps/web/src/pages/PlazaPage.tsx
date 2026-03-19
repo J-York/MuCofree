@@ -180,10 +180,22 @@ export default function PlazaPage() {
         <div className="plaza-banner-title">打工人音乐广场</div>
         <div className="plaza-banner-sub">每个人都有一首属于自己的歌</div>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          <span className="badge badge-gold" style={{ background: "rgba(255,255,255,0.18)", color: "white" }}>
+          <span
+            className="badge badge-gold"
+            style={{
+              background: "var(--banner-badge-bg)",
+              color: "var(--banner-badge-text)"
+            }}
+          >
             {totalShares} 首分享
           </span>
-          <span className="badge badge-gold" style={{ background: "rgba(255,255,255,0.18)", color: "white" }}>
+          <span
+            className="badge badge-gold"
+            style={{
+              background: "var(--banner-badge-bg)",
+              color: "var(--banner-badge-text)"
+            }}
+          >
             {userTotal} 位分享者
           </span>
         </div>
@@ -243,7 +255,7 @@ export default function PlazaPage() {
                         <div className="plaza-share-cover-placeholder" style={safeUrl(sh.coverUrl) ? { display: "none" } : {}}>♪</div>
                         <div className="plaza-share-play-overlay">
                           {isLoadingThis ? (
-                            <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2, borderTopColor: "white", borderColor: "rgba(255,255,255,0.3)" }} />
+                            <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2 }} />
                           ) : (
                             <span className="plaza-share-play-icon">
                               {isActive && playing ? "▐▐" : "▶"}
