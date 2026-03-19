@@ -1,5 +1,7 @@
 import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import ThemeToggle from "./components/ThemeToggle";
 import { PlayerProvider } from "./context/PlayerContext";
 import Player from "./components/Player";
 import Avatar from "./components/Avatar";
@@ -69,14 +71,18 @@ function SiteHeader() {
             <>
               <Avatar name={user.name} avatarUrl={user.avatarUrl} size="sm" />
               <span className="nav-name">{user.name}</span>
+              <ThemeToggle />
               <button className="btn btn-ghost btn-sm" onClick={() => void handleLogout()}>
                 退出
               </button>
             </>
           ) : (
-            <NavLink to="/login" className="btn btn-primary btn-sm">
-              登录
-            </NavLink>
+            <>
+              <ThemeToggle />
+              <NavLink to="/login" className="btn btn-primary btn-sm">
+                登录
+              </NavLink>
+            </>
           )}
         </div>
       </div>
@@ -135,10 +141,12 @@ function AppShell() {
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function App() {
   return (
-    <AuthProvider>
-      <PlayerProvider>
-        <AppShell />
-      </PlayerProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <PlayerProvider>
+          <AppShell />
+        </PlayerProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

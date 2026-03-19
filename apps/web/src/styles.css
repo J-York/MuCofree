@@ -38,6 +38,32 @@
   --transition-slow: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+:root.dark {
+  --cream:        #121212;
+  --cream-dark:   #1E1E1E;
+  --warm-100:     #2A2A2A;
+  --warm-200:     #3D3D3D;
+  --warm-300:     #5C5C5C;
+  --teal:         #4A9B9B;
+  --teal-hover:   #5CBCBC;
+  --teal-light:   #243B3B;
+  --teal-mid:     #2D6A6A;
+  --brown:        #A58A76;
+  --brown-light:  #3D2E1E;
+  --gold:         #D4A860;
+  --gold-light:   #3D2E1E;
+  --ink:          #EAEAEA;
+  --ink-mid:      #B5A898;
+  --ink-light:    #7A6A56;
+  --ink-ghost:    #3D2E1E;
+  --red:          #D87070;
+  --red-light:    #3D2E1E;
+
+  --shadow-card:  0 2px 16px rgba(0, 0, 0, 0.3), 0 1px 4px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-hover: 0 6px 24px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Reset & Base
 ═══════════════════════════════════════════════════════════════ */
@@ -57,6 +83,7 @@ body {
   font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.35s ease, color 0.35s ease;
   min-height: 100vh;
 }
 
@@ -140,13 +167,15 @@ button {
    Header / Nav
 ═══════════════════════════════════════════════════════════════ */
 .site-header {
-  background: rgba(250, 247, 242, 0.92);
+  background: var(--cream);
+  /* Using solid cream instead of rgba for better dark mode compatibility */
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--warm-200);
   position: sticky;
   top: 0;
   z-index: 100;
+  transition: background-color 0.35s ease, border-color 0.35s ease;
 }
 
 .site-header-inner {
@@ -170,7 +199,7 @@ button {
   height: 36px;
   border-radius: 10px;
   background: linear-gradient(135deg, var(--teal) 0%, var(--teal-mid) 100%);
-  color: white;
+  color: var(--cream);
   display: grid;
   place-items: center;
   font-family: var(--font-serif);
@@ -237,7 +266,7 @@ button {
    Cards
 ═══════════════════════════════════════════════════════════════ */
 .card {
-  background: white;
+  background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-md);
   padding: 20px;
@@ -252,7 +281,7 @@ button {
 }
 
 .card-sm {
-  background: white;
+  background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-sm);
   padding: 14px;
@@ -260,7 +289,7 @@ button {
 }
 
 .section-card {
-  background: white;
+  background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-lg);
   padding: 28px;
@@ -296,7 +325,7 @@ button {
 
 .btn-primary {
   background: var(--teal);
-  color: white;
+  color: var(--cream);
   border-color: var(--teal);
 }
 
@@ -304,7 +333,7 @@ button {
   background: var(--teal-hover);
   border-color: var(--teal-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(45, 106, 106, 0.3);
+  box-shadow: var(--shadow-hover);
 }
 
 .btn-secondary {
@@ -337,7 +366,7 @@ button {
 
 .btn-teal-ghost:hover:not(:disabled) {
   background: var(--teal);
-  color: white;
+  color: var(--cream);
 }
 
 .btn-danger-ghost {
@@ -354,12 +383,12 @@ button {
 
 .btn-gold {
   background: var(--gold);
-  color: white;
+  color: var(--cream);
   border-color: var(--gold);
 }
 
 .btn-gold:hover:not(:disabled) {
-  background: #b8873c;
+  background: var(--gold);
   transform: translateY(-1px);
 }
 
@@ -388,7 +417,7 @@ button {
   padding: 10px 14px;
   border: 1.5px solid var(--warm-200);
   border-radius: var(--radius-sm);
-  background: white;
+  background: var(--cream-dark);
   font-size: 14px;
   color: var(--ink);
   font-family: var(--font-sans);
@@ -418,7 +447,7 @@ button {
   border: 1.5px solid var(--warm-200);
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: white;
+  background: var(--cream-dark);
   box-shadow: var(--shadow-card);
   transition: var(--transition);
 }
@@ -539,7 +568,7 @@ button {
   gap: 14px;
   padding: 12px 16px;
   border-radius: var(--radius-md);
-  background: white;
+  background: var(--cream-dark);
   border: 1.5px solid var(--warm-200);
   cursor: pointer;
   transition: var(--transition);
@@ -599,7 +628,7 @@ button {
   flex-direction: column;
   gap: 14px;
   padding: 20px;
-  background: white;
+  background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-lg);
   cursor: pointer;
@@ -636,7 +665,7 @@ button {
   flex-direction: column;
   gap: 4px;
   padding: 18px;
-  background: white;
+  background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-md);
   transition: var(--transition);
@@ -680,11 +709,12 @@ button {
   left: 0;
   right: 0;
   z-index: 200;
-  background: rgba(250, 247, 242, 0.96);
+  background: var(--cream);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--warm-200);
-  box-shadow: 0 -4px 24px rgba(45, 106, 106, 0.1);
+  box-shadow: var(--shadow-card);
+  transition: background-color 0.35s ease, border-color 0.35s ease;
 }
 
 .player-inner {
@@ -739,7 +769,7 @@ button {
   height: 42px;
   border-radius: 50%;
   background: var(--teal);
-  color: white;
+  color: var(--cream);
   border: none;
   cursor: pointer;
   display: grid;
@@ -818,7 +848,7 @@ button {
 }
 
 .login-card {
-  background: white;
+  background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-xl);
   padding: 40px 36px;
@@ -835,7 +865,7 @@ button {
   height: 52px;
   border-radius: 16px;
   background: linear-gradient(135deg, var(--teal) 0%, var(--teal-mid) 100%);
-  color: white;
+  color: var(--cream);
   display: grid;
   place-items: center;
   font-family: var(--font-serif);
@@ -880,10 +910,10 @@ button {
 }
 
 .login-tab.active {
-  background: white;
+  background: var(--cream-dark);
   color: var(--teal);
   font-weight: 600;
-  box-shadow: 0 1px 4px rgba(26, 18, 8, 0.08);
+  box-shadow: var(--shadow-card);
 }
 
 .form-field {
@@ -903,10 +933,10 @@ button {
    Banner / Hero
 ═══════════════════════════════════════════════════════════════ */
 .plaza-banner {
-  background: linear-gradient(135deg, var(--teal) 0%, var(--teal-mid) 60%, #5BA8A8 100%);
+  background: linear-gradient(135deg, var(--teal) 0%, var(--teal-mid) 60%, var(--teal-hover) 100%);
   border-radius: var(--radius-xl);
   padding: 36px 40px;
-  color: white;
+  color: var(--cream);
   position: relative;
   overflow: hidden;
 }
@@ -1012,19 +1042,19 @@ button {
 .alert-error {
   background: var(--red-light);
   color: var(--red);
-  border: 1px solid #eecaca;
+  border: 1px solid var(--red);
 }
 
 .alert-success {
   background: var(--teal-light);
   color: var(--teal);
-  border: 1px solid #c5dede;
+  border: 1px solid var(--teal);
 }
 
 .alert-info {
   background: var(--gold-light);
-  color: #8B6430;
-  border: 1px solid #f0ddb8;
+  color: var(--gold);
+  border: 1px solid var(--gold);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1116,10 +1146,10 @@ button {
 }
 
 .plaza-view-btn.active {
-  background: white;
+  background: var(--cream-dark);
   color: var(--teal);
   font-weight: 600;
-  box-shadow: 0 1px 4px rgba(26, 18, 8, 0.08);
+  box-shadow: var(--shadow-card);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1140,7 +1170,7 @@ button {
    Plaza Share Card (waterfall item)
 ═══════════════════════════════════════════════════════════════ */
 .plaza-share-card {
-  background: white;
+  background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -1205,7 +1235,7 @@ button {
   height: 44px;
   border-radius: 50%;
   background: rgba(45, 106, 106, 0.9);
-  color: white;
+  color: var(--cream);
   display: grid;
   place-items: center;
   font-size: 16px;
