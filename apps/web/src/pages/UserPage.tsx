@@ -21,7 +21,7 @@ export default function UserPage() {
   const navigate = useNavigate();
 
   const { user: me } = useAuth();
-  const { play, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
+  const { play, appendToPlaylistQueue, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
 
   const isOwner = !!me && me.id === userId;
 
@@ -90,6 +90,12 @@ export default function UserPage() {
         albumName: share.albumName,
         coverUrl: share.coverUrl
       });
+      appendToPlaylistQueue({
+        mid: share.songMid,
+        title: share.songTitle ?? share.songMid,
+        singer: share.singerName ?? undefined,
+        coverUrl: share.coverUrl ?? undefined
+      });
       setPlaylistMids((prev) => new Set([...prev, share.songMid]));
       showToast(`已添加《${share.songTitle ?? share.songMid}》到我的歌单`);
     } catch (e) {
@@ -99,13 +105,13 @@ export default function UserPage() {
 
   function playSong(song: PlayerSong) {
     const queue = shares.map((item) => ({
-          mid: item.songMid,
-          title: item.songTitle ?? item.songMid,
-          singer: item.singerName ?? undefined,
-          coverUrl: item.coverUrl ?? undefined
-        }));
+      mid: item.songMid,
+      title: item.songTitle ?? item.songMid,
+      singer: item.singerName ?? undefined,
+      coverUrl: item.coverUrl ?? undefined
+    }));
 
-    play(song, queue.length ? queue : undefined);
+    play(song, queue.length ? queue : undefined, "share");
   }
 
   return (

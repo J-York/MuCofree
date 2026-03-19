@@ -9,6 +9,7 @@ export type PlayerSong = {
 };
 
 export type PlayMode = "sequential" | "repeat-one" | "shuffle";
+export type QueueSource = "playlist" | "search" | "daily" | "share" | "single" | null;
 
 type PlayerState = {
   queue: PlayerSong[];
@@ -19,10 +20,13 @@ type PlayerState = {
   loadingMid: string | null;
   errorMsg: string | null;
   playMode: PlayMode;
+  queueSource: QueueSource;
   canPrev: boolean;
   canNext: boolean;
-  play: (song: PlayerSong, extraQueue?: PlayerSong[]) => void;
+  play: (song: PlayerSong, extraQueue?: PlayerSong[], source?: QueueSource) => void;
   enqueue: (song: PlayerSong) => void;
+  appendToPlaylistQueue: (song: PlayerSong) => void;
+  removeFromPlaylistQueue: (songMid: string) => void;
   playIndex: (index: number) => void;
   next: () => void;
   prev: () => void;
@@ -33,6 +37,7 @@ type PlayerState = {
   cyclePlayMode: () => void;
   audioRef: React.RefObject<HTMLAudioElement | null>;
 };
+
 
 function getPlayableIndex(targetIndex: number, queueLength: number): number {
   if (queueLength <= 0) return -1;
@@ -59,7 +64,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [loadingMid, setLoadingMid] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>("sequential");
+  const [queueSource, setQueueSource] = useState<QueueSource>(null);
   const playModeRef = useRef<PlayMode>("sequential");
+  const queueSourceRef = useRef<QueueSource>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const shuffleOrderRef = useRef<number[]>([]);
   const shufflePositionRef = useRef(-1);
@@ -131,10 +138,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  function play(song: PlayerSong, extraQueue?: PlayerSong[]) {
+  function play(song: PlayerSong, extraQueue?: PlayerSong[], source?: QueueSource) {
     const newQueue = extraQueue ?? [song];
     const idx = newQueue.findIndex((s) => s.mid === song.mid);
     const safeIndex = idx === -1 ? 0 : idx;
+    const nextSource = source ?? (extraQueue ? "single" : null);
+    queueSourceRef.current = nextSource;
+    setQueueSource(nextSource);
     if (playModeRef.current === "shuffle") {
       resetShuffleState(safeIndex, newQueue.length);
     } else if (extraQueue) {
@@ -154,6 +164,85 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           shuffleOrderRef.current.push(nextQueue.length - 1);
         }
       }
+      return nextQueue;
+    });
+  }
+
+  function appendToPlaylistQueue(song: PlayerSong) {
+    if (queueSourceRef.current !== "playlist") return;
+    setQueue((q) => {
+      if (q.find((item) => item.mid === song.mid)) return q;
+      const nextQueue = [...q, song];
+      if (playModeRef.current === "shuffle") {
+        const playableIndex = getPlayableIndex(currentIndex, q.length);
+        if (playableIndex >= 0) {
+          ensureShuffleState(playableIndex, q.length);
+          shuffleOrderRef.current.push(nextQueue.length - 1);
+        }
+      }
+      return nextQueue;
+    });
+  }
+
+  function removeFromPlaylistQueue(songMid: string) {
+    if (queueSourceRef.current !== "playlist") return;
+    setQueue((q) => {
+      const removeIndex = q.findIndex((item) => item.mid === songMid);
+      if (removeIndex === -1) return q;
+
+      const nextQueue = q.filter((item) => item.mid !== songMid);
+      const removedCurrent = removeIndex === currentIndex;
+      const nextIndex =
+        nextQueue.length === 0
+          ? -1
+          : removedCurrent
+            ? Math.min(removeIndex, nextQueue.length - 1)
+            : currentIndex > removeIndex
+              ? currentIndex - 1
+              : currentIndex;
+
+      if (playModeRef.current === "shuffle") {
+        const remapIndex = (index: number) => {
+          if (index === removeIndex) return -1;
+          return index > removeIndex ? index - 1 : index;
+        };
+
+        shuffleOrderRef.current = shuffleOrderRef.current
+          .map(remapIndex)
+          .filter((index) => index >= 0);
+
+        shuffleHistoryRef.current = shuffleHistoryRef.current
+          .map(remapIndex)
+          .filter((index) => index >= 0);
+
+        if (nextIndex >= 0) {
+          const position = shuffleOrderRef.current.indexOf(nextIndex);
+          shufflePositionRef.current = position >= 0 ? position : 0;
+          if (shuffleHistoryRef.current[shuffleHistoryRef.current.length - 1] !== nextIndex) {
+            shuffleHistoryRef.current.push(nextIndex);
+          }
+        } else {
+          resetShuffleState(-1, 0);
+        }
+      }
+
+      setCurrentIndex(nextIndex);
+
+      if (nextQueue.length === 0) {
+        const audio = audioRef.current;
+        if (audio) {
+          audio.pause();
+          audio.removeAttribute("src");
+          audio.load();
+        }
+        queueSourceRef.current = null;
+        setQueueSource(null);
+        setAudioUrl(null);
+        setPlaying(false);
+      } else if (removedCurrent) {
+        void fetchAndPlay(nextQueue[nextIndex]!, nextIndex);
+      }
+
       return nextQueue;
     });
   }
@@ -235,6 +324,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.load();
     }
     resetShuffleState(-1, 0);
+    queueSourceRef.current = null;
+    setQueueSource(null);
     setQueue([]);
     setCurrentIndex(-1);
     setAudioUrl(null);
@@ -278,10 +369,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         loadingMid,
         errorMsg,
         playMode,
+        queueSource,
         canPrev,
         canNext,
         play,
         enqueue,
+        appendToPlaylistQueue,
+        removeFromPlaylistQueue,
         playIndex,
         next,
         prev,

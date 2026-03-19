@@ -22,7 +22,7 @@ const DAILY_REFRESH_COOLDOWN_MS = 10_000;
 
 export default function HomePage() {
   const { user } = useAuth();
-  const { play, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
+  const { play, appendToPlaylistQueue, removeFromPlaylistQueue, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab: Tab =
     searchParams.get("tab") === "playlist"
@@ -188,6 +188,12 @@ export default function HomePage() {
         albumName: song.albumName ?? null,
         coverUrl: song.coverUrl ?? null
       });
+      appendToPlaylistQueue({
+        mid: song.mid,
+        title: song.title,
+        singer: song.singer ?? undefined,
+        coverUrl: song.coverUrl ?? undefined
+      });
       showToast(`已添加《${song.title}》到我的歌单`);
       void loadPlaylist();
     } catch (e) {
@@ -198,6 +204,7 @@ export default function HomePage() {
   async function removeFromPlaylist(songMid: string, title: string) {
     try {
       await apiRemoveFromPlaylist(songMid);
+      removeFromPlaylistQueue(songMid);
       showToast(`已从歌单移除《${title}》`);
       setPlaylist((prev) => prev.filter((s) => s.songMid !== songMid));
       if (shareSong?.songMid === songMid) {
@@ -279,7 +286,7 @@ export default function HomePage() {
       coverUrl: item.coverUrl
     }));
 
-    play(song, queue.length ? queue : undefined);
+    play(song, queue.length ? queue : undefined, "search");
   }
 
   function playPlaylistSong(song: PlayerSong) {
@@ -290,7 +297,7 @@ export default function HomePage() {
       coverUrl: item.coverUrl ?? undefined
     }));
 
-    play(song, queue.length ? queue : undefined);
+    play(song, queue.length ? queue : undefined, "playlist");
   }
 
   function dailySongToQqSong(s: DailySong): QqSong {
@@ -314,7 +321,7 @@ export default function HomePage() {
       const q = dailySongToQqSong(s);
       return { mid: q.mid, title: q.title, singer: q.singer, coverUrl: q.coverUrl };
     });
-    play(song, queue.length ? queue : undefined);
+    play(song, queue.length ? queue : undefined, "daily");
   }
 
   return (

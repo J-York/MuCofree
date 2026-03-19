@@ -20,7 +20,7 @@ const PAGE_SIZE = 20;
 
 export default function PlazaPage() {
   const [view, setView] = useState<ViewMode>("songs");
-  const { currentSong, playing, play, togglePlayPause, loadingMid } = usePlayer();
+  const { currentSong, playing, play, appendToPlaylistQueue, togglePlayPause, loadingMid } = usePlayer();
   const { user: me } = useAuth();
 
   // ── 歌曲动态（游标分页）─────────────────────────────────────────────────
@@ -126,6 +126,12 @@ export default function PlazaPage() {
         albumName: sh.albumName,
         coverUrl: sh.coverUrl
       });
+      appendToPlaylistQueue({
+        mid: sh.songMid,
+        title: sh.songTitle ?? sh.songMid,
+        singer: sh.singerName ?? undefined,
+        coverUrl: sh.coverUrl ?? undefined
+      });
       setPlaylistMids((prev) => new Set([...prev, sh.songMid]));
       showToast(`已添加《${sh.songTitle ?? sh.songMid}》到我的歌单`);
     } catch (e) {
@@ -163,7 +169,7 @@ export default function PlazaPage() {
     if (isActive) {
       togglePlayPause();
     } else {
-      play(song);
+      play(song, undefined, "share");
     }
   }
 
