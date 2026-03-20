@@ -8,7 +8,8 @@
     "dev": "concurrently -n api,web -c green,cyan \"npm -w @music-share/api run dev\" \"npm -w @music-share/web run dev\"",
     "build": "npm -w @music-share/api run build && npm -w @music-share/web run build",
     "lint": "echo 'no lint configured'",
-    "typecheck": "npm -w @music-share/api run typecheck && npm -w @music-share/web run typecheck"
+    "typecheck": "npm -w @music-share/api run typecheck && npm -w @music-share/web run typecheck",
+    "test": "npm -w @music-share/api run test && npm -w @music-share/web run test"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"
