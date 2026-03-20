@@ -133,7 +133,9 @@ export function openDb(databasePath: string): Db {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       share_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
-      reaction_key TEXT NOT NULL,
+      reaction_key TEXT NOT NULL CHECK (
+        reaction_key IN ('slacking', 'boost', 'healing', 'after_work', 'loop')
+      ),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (share_id) REFERENCES shares(id) ON DELETE CASCADE,

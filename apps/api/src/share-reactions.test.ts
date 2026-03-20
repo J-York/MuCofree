@@ -10,6 +10,10 @@ describe("share reactions domain", () => {
     expect(reactionSchema.parse("boost")).toBe("boost");
   });
 
+  it("rejects an invalid reaction key", () => {
+    expect(() => reactionSchema.parse("invalid_key")).toThrow();
+  });
+
   it("creates empty reaction counts with all keys set to zero", () => {
     expect(createEmptyReactionCounts()).toEqual({
       slacking: 0,
