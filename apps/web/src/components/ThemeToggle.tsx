@@ -1,6 +1,4 @@
 import { useTheme } from '../context/ThemeContext';
-import { Moon, Sun } from 'lucide-react'; // if available, else emojis
-
 export default function ThemeToggle() {
   const { theme, toggleTheme } = useTheme();
 
