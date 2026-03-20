@@ -287,7 +287,7 @@ export default function PlazaPage() {
           {feedError ? <div className="alert alert-error">{feedError}</div> : null}
 
           {feedItems.length > 0 ? (
-            <div className="masonry">
+            <div className="plaza-share-grid">
               {feedItems.map((sh) => {
                 const isActive = currentSong?.mid === sh.songMid;
                 const isLoadingThis = loadingMid === sh.songMid;
@@ -296,75 +296,76 @@ export default function PlazaPage() {
                 const inPlaylist = playlistMids.has(sh.songMid);
                 const isAdding = addingMids.has(sh.songMid);
                 return (
-                  <div key={sh.id} className="masonry-item">
-                    <div className={`plaza-share-card${isActive ? " plaza-share-card--active" : ""}`}>
-                      {/* Large cover */}
-                      <div className="plaza-share-cover-wrap" onClick={() => handlePlayShare(sh)}>
-                        {safeUrl(sh.coverUrl) ? (
-                          <img
-                            src={safeUrl(sh.coverUrl)!}
-                            alt={sh.songTitle ?? ""}
-                            className="plaza-share-cover"
-                            onError={(e) => {
-                              const img = e.currentTarget;
-                              img.style.display = "none";
-                              const placeholder = img.nextElementSibling as HTMLElement | null;
-                              if (placeholder) placeholder.style.display = "flex";
-                            }}
-                          />
-                        ) : null}
-                        <div className="plaza-share-cover-placeholder" style={safeUrl(sh.coverUrl) ? { display: "none" } : {}}>♪</div>
-                        <div className="plaza-share-play-overlay">
-                          {isLoadingThis ? (
-                            <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2 }} />
-                          ) : (
-                            <span className="plaza-share-play-icon">
-                              {isActive && playing ? "▐▐" : "▶"}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Body */}
-                      <div className="plaza-share-body">
-                        <div className="song-title truncate">{sh.songTitle ?? sh.songMid}</div>
-                        {sh.singerName ? <div className="song-meta truncate">{sh.singerName}</div> : null}
-                        {sh.comment ? <div className="share-comment">{sh.comment}</div> : null}
-                        <ShareReactionBar
-                          reactionCounts={sh.reactionCounts}
-                          viewerReactionKey={sh.viewerReactionKey}
-                          disabled={!me || isOwner}
-                          pending={pendingReactionShareIds.has(sh.id)}
-                          onSelect={(key) => void onReact(sh, key)}
+                  <div
+                    key={sh.id}
+                    className={`plaza-share-card${isActive ? " plaza-share-card--active" : ""}`}
+                  >
+                    {/* Large cover */}
+                    <div className="plaza-share-cover-wrap" onClick={() => handlePlayShare(sh)}>
+                      {safeUrl(sh.coverUrl) ? (
+                        <img
+                          src={safeUrl(sh.coverUrl)!}
+                          alt={sh.songTitle ?? ""}
+                          className="plaza-share-cover"
+                          onError={(e) => {
+                            const img = e.currentTarget;
+                            img.style.display = "none";
+                            const placeholder = img.nextElementSibling as HTMLElement | null;
+                            if (placeholder) placeholder.style.display = "flex";
+                          }}
                         />
+                      ) : null}
+                      <div className="plaza-share-cover-placeholder" style={safeUrl(sh.coverUrl) ? { display: "none" } : {}}>♪</div>
+                      <div className="plaza-share-play-overlay">
+                        {isLoadingThis ? (
+                          <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2 }} />
+                        ) : (
+                          <span className="plaza-share-play-icon">
+                            {isActive && playing ? "▐▐" : "▶"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
 
-                        <div className="plaza-share-footer">
-                          <Link to={`/user/${sh.userId}`} className="plaza-share-user">
-                            <Avatar name={sh.userName} avatarUrl={sh.userAvatarUrl} size="sm" />
-                            <div className="flex-1" style={{ minWidth: 0 }}>
-                              <div className="text-sm truncate" style={{ color: "var(--ink-mid)", fontWeight: 500 }}>{sh.userName}</div>
-                              <div className="text-xs">{formatDateTime(sh.createdAt)}</div>
-                            </div>
-                          </Link>
-                          {canAddToPlaylist ? (
-                            <button
-                              className="btn btn-sm btn-teal-ghost"
-                              style={{ flexShrink: 0 }}
-                              onClick={() => void addToPlaylist(sh)}
-                              disabled={inPlaylist || isAdding || playlistLoading}
-                            >
-                              {inPlaylist ? "已收藏" : isAdding ? "添加中…" : "+ 歌单"}
-                            </button>
-                          ) : isOwner ? (
-                            <button
-                              className="btn btn-sm btn-danger-ghost"
-                              style={{ flexShrink: 0 }}
-                              onClick={() => void onDelete(sh)}
-                            >
-                              撤回
-                            </button>
-                          ) : null}
-                        </div>
+                    {/* Body */}
+                    <div className="plaza-share-body">
+                      <div className="song-title truncate">{sh.songTitle ?? sh.songMid}</div>
+                      {sh.singerName ? <div className="song-meta truncate">{sh.singerName}</div> : null}
+                      {sh.comment ? <div className="share-comment">{sh.comment}</div> : null}
+                      <ShareReactionBar
+                        reactionCounts={sh.reactionCounts}
+                        viewerReactionKey={sh.viewerReactionKey}
+                        disabled={!me || isOwner}
+                        pending={pendingReactionShareIds.has(sh.id)}
+                        onSelect={(key) => void onReact(sh, key)}
+                      />
+
+                      <div className="plaza-share-footer">
+                        <Link to={`/user/${sh.userId}`} className="plaza-share-user">
+                          <Avatar name={sh.userName} avatarUrl={sh.userAvatarUrl} size="sm" />
+                          <div className="flex-1" style={{ minWidth: 0 }}>
+                            <div className="text-sm truncate" style={{ color: "var(--ink-mid)", fontWeight: 500 }}>{sh.userName}</div>
+                            <div className="text-xs">{formatDateTime(sh.createdAt)}</div>
+                          </div>
+                        </Link>
+                        {canAddToPlaylist ? (
+                          <button
+                            className="btn btn-sm btn-teal-ghost"
+                            style={{ flexShrink: 0 }}
+                            onClick={() => void addToPlaylist(sh)}
+                            disabled={inPlaylist || isAdding || playlistLoading}
+                          >
+                            {inPlaylist ? "已收藏" : isAdding ? "添加中…" : "+ 歌单"}
+                          </button>
+                        ) : isOwner ? (
+                          <button
+                            className="btn btn-sm btn-danger-ghost"
+                            style={{ flexShrink: 0 }}
+                            onClick={() => void onDelete(sh)}
+                          >
+                            撤回
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </div>

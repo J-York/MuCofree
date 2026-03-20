@@ -1233,21 +1233,17 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Masonry / Waterfall Layout
+  Plaza Share Grid
 ═══════════════════════════════════════════════════════════════ */
-.masonry {
-  /* Auto-adaptive columns: increase column count as container grows */
-  column-width: 280px;
-  column-gap: 16px;
-}
-
-.masonry-item {
-  break-inside: avoid;
-  margin-bottom: 16px;
+.plaza-share-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Plaza Share Card (waterfall item)
+  Plaza Share Card
 ═══════════════════════════════════════════════════════════════ */
 .plaza-share-card {
   background: var(--cream-dark);
@@ -1381,6 +1377,14 @@ button {
 /* ═══════════════════════════════════════════════════════════════
    Responsive
 ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 980px) {
+  /* Keep three-column cards from getting too narrow on medium screens. */
+  .plaza-share-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
 @media (max-width: 640px) {
   .container { padding: 0 16px; }
   .section-card { padding: 20px 16px; }
@@ -1398,14 +1402,9 @@ button {
   .grid-3 { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 
   /* tighter spacing on small screens */
-  .masonry {
-    column-gap: 12px;
-    column-width: 220px;
+  .plaza-share-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
   }
-  .masonry-item { margin-bottom: 12px; }
   .login-card { padding: 28px 20px; }
-}
-
-@media (max-width: 400px) {
-  .masonry { columns: 1; }
 }
