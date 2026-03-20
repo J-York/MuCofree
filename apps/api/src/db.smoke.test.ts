@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { openDb } from "./db";
+import { openDb } from "./db.js";
 
 const tempDirs: string[] = [];
 
