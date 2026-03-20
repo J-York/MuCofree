@@ -8,6 +8,9 @@ export const reactionOptions = [
 
 export type ReactionKey = (typeof reactionOptions)[number]["key"];
 export type ReactionCounts = Record<ReactionKey, number>;
+type ApplyOptimisticReactionOptions = {
+  canReact?: boolean;
+};
 
 export function createEmptyReactionCounts(): ReactionCounts {
   return {
@@ -23,7 +26,15 @@ export function applyOptimisticReaction(
   reactionCounts: ReactionCounts,
   viewerReactionKey: ReactionKey | null,
   clickedReactionKey: ReactionKey,
+  options: ApplyOptimisticReactionOptions = {},
 ): { reactionCounts: ReactionCounts; viewerReactionKey: ReactionKey | null } {
+  if (options.canReact === false) {
+    return {
+      reactionCounts,
+      viewerReactionKey,
+    };
+  }
+
   const nextReactionCounts = { ...reactionCounts };
   const isRemovingReaction = viewerReactionKey === clickedReactionKey;
 

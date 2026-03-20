@@ -51,4 +51,18 @@ describe("applyOptimisticReaction", () => {
       viewerReactionKey: null,
     });
   });
+
+  it("returns the current state unchanged when reactions are disabled", () => {
+    const current = {
+      ...createEmptyReactionCounts(),
+      boost: 2,
+    };
+
+    const next = applyOptimisticReaction(current, "boost", "loop", { canReact: false });
+
+    expect(next).toEqual({
+      reactionCounts: current,
+      viewerReactionKey: "boost",
+    });
+  });
 });

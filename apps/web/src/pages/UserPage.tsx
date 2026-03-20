@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   apiDeleteShare,
+  apiDeleteShareReaction,
   apiGetUser,
   apiAddToPlaylist,
   apiGetPlaylist,
+  apiSetShareReaction,
   apiUserShares,
   type Share,
   type User
@@ -13,6 +15,8 @@ import { useAuth } from "../context/AuthContext";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
 import SongCard from "../components/SongCard";
 import Avatar from "../components/Avatar";
+import ShareReactionBar from "../components/ShareReactionBar";
+import { applyOptimisticReaction, type ReactionKey } from "../share-reactions";
 import { formatDateTime } from "../utils";
 
 export default function UserPage() {
@@ -31,6 +35,7 @@ export default function UserPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [playlistMids, setPlaylistMids] = useState<Set<string>>(new Set());
+  const [pendingReactionShareIds, setPendingReactionShareIds] = useState<Set<number>>(new Set());
 
   // Toast
   const [toast, setToast] = useState<string | null>(null);
@@ -100,6 +105,62 @@ export default function UserPage() {
       showToast(`已添加《${share.songTitle ?? share.songMid}》到我的歌单`);
     } catch (e) {
       showToast((e as Error).message);
+    }
+  }
+
+  async function onReact(share: Share, clickedReactionKey: ReactionKey) {
+    const optimistic = applyOptimisticReaction(
+      share.reactionCounts,
+      share.viewerReactionKey,
+      clickedReactionKey,
+      { canReact: !!me && me.id !== share.userId },
+    );
+
+    if (
+      optimistic.reactionCounts === share.reactionCounts &&
+      optimistic.viewerReactionKey === share.viewerReactionKey
+    ) {
+      return;
+    }
+
+    setPendingReactionShareIds((prev) => new Set([...prev, share.id]));
+    setShares((prev) =>
+      prev.map((item) =>
+        item.id === share.id
+          ? {
+              ...item,
+              reactionCounts: optimistic.reactionCounts,
+              viewerReactionKey: optimistic.viewerReactionKey,
+            }
+          : item,
+      ),
+    );
+
+    try {
+      if (share.viewerReactionKey === clickedReactionKey) {
+        await apiDeleteShareReaction(share.id);
+      } else {
+        await apiSetShareReaction(share.id, clickedReactionKey);
+      }
+    } catch (e) {
+      setShares((prev) =>
+        prev.map((item) =>
+          item.id === share.id
+            ? {
+                ...item,
+                reactionCounts: share.reactionCounts,
+                viewerReactionKey: share.viewerReactionKey,
+              }
+            : item,
+        ),
+      );
+      showToast((e as Error).message);
+    } finally {
+      setPendingReactionShareIds((prev) => {
+        const next = new Set(prev);
+        next.delete(share.id);
+        return next;
+      });
     }
   }
 
@@ -208,6 +269,15 @@ export default function UserPage() {
                       {sh.comment}
                     </div>
                   ) : null}
+                  <div style={{ marginTop: 8 }}>
+                    <ShareReactionBar
+                      reactionCounts={sh.reactionCounts}
+                      viewerReactionKey={sh.viewerReactionKey}
+                      disabled={!me || isOwner}
+                      pending={pendingReactionShareIds.has(sh.id)}
+                      onSelect={(key) => void onReact(sh, key)}
+                    />
+                  </div>
                   <div className="text-xs" style={{ marginTop: 6 }}>
                     {formatDateTime(sh.createdAt)}
                   </div>

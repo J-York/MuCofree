@@ -3,15 +3,19 @@ import { Link } from "react-router-dom";
 import {
   apiAddToPlaylist,
   apiDeleteShare,
+  apiDeleteShareReaction,
   apiGetPlaylist,
+  apiSetShareReaction,
   apiSharesFeed,
   apiUsersList,
   type FeedShare,
   type UserWithPreview
 } from "../api";
 import Avatar from "../components/Avatar";
+import ShareReactionBar from "../components/ShareReactionBar";
 import { useAuth } from "../context/AuthContext";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
+import { applyOptimisticReaction, type ReactionKey } from "../share-reactions";
 import { formatDateTime, safeUrl } from "../utils";
 
 type ViewMode = "songs" | "users";
@@ -43,6 +47,7 @@ export default function PlazaPage() {
   const [playlistMids, setPlaylistMids] = useState<Set<string>>(new Set());
   const [playlistLoading, setPlaylistLoading] = useState(false);
   const [addingMids, setAddingMids] = useState<Set<string>>(new Set());
+  const [pendingReactionShareIds, setPendingReactionShareIds] = useState<Set<number>>(new Set());
 
   // Toast
   const [toast, setToast] = useState<string | null>(null);
@@ -153,6 +158,62 @@ export default function PlazaPage() {
       showToast("已撤回分享");
     } catch (e) {
       showToast((e as Error).message);
+    }
+  }
+
+  async function onReact(sh: FeedShare, clickedReactionKey: ReactionKey) {
+    const optimistic = applyOptimisticReaction(
+      sh.reactionCounts,
+      sh.viewerReactionKey,
+      clickedReactionKey,
+      { canReact: !!me && me.id !== sh.userId },
+    );
+
+    if (
+      optimistic.reactionCounts === sh.reactionCounts &&
+      optimistic.viewerReactionKey === sh.viewerReactionKey
+    ) {
+      return;
+    }
+
+    setPendingReactionShareIds((prev) => new Set([...prev, sh.id]));
+    setFeedItems((prev) =>
+      prev.map((item) =>
+        item.id === sh.id
+          ? {
+              ...item,
+              reactionCounts: optimistic.reactionCounts,
+              viewerReactionKey: optimistic.viewerReactionKey,
+            }
+          : item,
+      ),
+    );
+
+    try {
+      if (sh.viewerReactionKey === clickedReactionKey) {
+        await apiDeleteShareReaction(sh.id);
+      } else {
+        await apiSetShareReaction(sh.id, clickedReactionKey);
+      }
+    } catch (e) {
+      setFeedItems((prev) =>
+        prev.map((item) =>
+          item.id === sh.id
+            ? {
+                ...item,
+                reactionCounts: sh.reactionCounts,
+                viewerReactionKey: sh.viewerReactionKey,
+              }
+            : item,
+        ),
+      );
+      showToast((e as Error).message);
+    } finally {
+      setPendingReactionShareIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sh.id);
+        return next;
+      });
     }
   }
 
@@ -269,6 +330,13 @@ export default function PlazaPage() {
                         <div className="song-title truncate">{sh.songTitle ?? sh.songMid}</div>
                         {sh.singerName ? <div className="song-meta truncate">{sh.singerName}</div> : null}
                         {sh.comment ? <div className="share-comment">{sh.comment}</div> : null}
+                        <ShareReactionBar
+                          reactionCounts={sh.reactionCounts}
+                          viewerReactionKey={sh.viewerReactionKey}
+                          disabled={!me || isOwner}
+                          pending={pendingReactionShareIds.has(sh.id)}
+                          onSelect={(key) => void onReact(sh, key)}
+                        />
 
                         <div className="plaza-share-footer">
                           <Link to={`/user/${sh.userId}`} className="plaza-share-user">
