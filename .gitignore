@@ -49,3 +49,6 @@ coverage/
 
 # Optional: 若使用 pnpm
 # .pnpm-store/
+
+# Local worktrees
+.worktrees/
