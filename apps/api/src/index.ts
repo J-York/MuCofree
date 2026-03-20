@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import express from "express";
 import cors from "cors";
 import session from "express-session";
@@ -7,6 +8,12 @@ import { z } from "zod";
 import { getEnv } from "./env.js";
 import { openDb, type Db } from "./db.js";
 import { SQLiteSessionStore } from "./session-store.js";
+import {
+  createEmptyReactionCounts,
+  reactionSchema,
+  type ReactionCounts,
+  type ReactionKey,
+} from "./share-reactions.js";
 import {
   createQqMusicClient,
   qqCover,
@@ -161,6 +168,18 @@ function mapShare(row: ShareRow) {
   };
 }
 
+function mapShareWithReactions(
+  row: ShareRow,
+  reactionCounts: ReactionCounts,
+  viewerReactionKey: ReactionKey | null,
+) {
+  return {
+    ...mapShare(row),
+    reactionCounts,
+    viewerReactionKey,
+  };
+}
+
 function mapPlaylist(row: PlaylistRow) {
   return {
     id: row.id,
@@ -269,9 +288,66 @@ function dbGetPlaylistEntry(db: Db, userId: number, songMid: string): PlaylistRo
   return db.prepare("SELECT * FROM playlist WHERE user_id = ? AND song_mid = ?").get(userId, songMid) as PlaylistRow | undefined;
 }
 
+type ShareReactionCountRow = {
+  share_id: number;
+  reaction_key: ReactionKey;
+  reaction_count: number;
+};
+
+type ViewerShareReactionRow = {
+  share_id: number;
+  reaction_key: ReactionKey;
+};
+
+function sqlPlaceholders(count: number) {
+  return Array.from({ length: count }, () => "?").join(", ");
+}
+
+function dbShareReactionState(db: Db, shareIds: number[], viewerUserId?: number) {
+  const reactionCountsByShareId = new Map<number, ReactionCounts>();
+  const viewerReactionKeyByShareId = new Map<number, ReactionKey | null>();
+
+  for (const shareId of shareIds) {
+    reactionCountsByShareId.set(shareId, createEmptyReactionCounts());
+    viewerReactionKeyByShareId.set(shareId, null);
+  }
+
+  if (shareIds.length === 0) {
+    return { reactionCountsByShareId, viewerReactionKeyByShareId };
+  }
+
+  const placeholders = sqlPlaceholders(shareIds.length);
+  const reactionCountRows = db.prepare(
+    `SELECT share_id, reaction_key, COUNT(*) AS reaction_count
+     FROM share_reactions
+     WHERE share_id IN (${placeholders})
+     GROUP BY share_id, reaction_key`,
+  ).all(...shareIds) as ShareReactionCountRow[];
+
+  for (const row of reactionCountRows) {
+    const reactionCounts = reactionCountsByShareId.get(row.share_id);
+    if (!reactionCounts) continue;
+    reactionCounts[row.reaction_key] = row.reaction_count;
+  }
+
+  if (viewerUserId !== undefined) {
+    const viewerReactionRows = db.prepare(
+      `SELECT share_id, reaction_key
+       FROM share_reactions
+       WHERE user_id = ? AND share_id IN (${placeholders})`,
+    ).all(viewerUserId, ...shareIds) as ViewerShareReactionRow[];
+
+    for (const row of viewerReactionRows) {
+      viewerReactionKeyByShareId.set(row.share_id, row.reaction_key);
+    }
+  }
+
+  return { reactionCountsByShareId, viewerReactionKeyByShareId };
+}
+
 // ── App factory ────────────────────────────────────────────────────────────
 
-function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret: string, secureCookie: boolean, trustProxy: boolean) {
+export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret: string, secureCookie: boolean, trustProxy: boolean) {
   const qq = createQqMusicClient(qqBaseUrl);
 
   const app = express();
@@ -566,7 +642,63 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
       const userId = parseIntParam(req.params.userId);
       const user = dbGetUserById(db, userId);
       if (!user) throw httpError(404, "User not found");
-      res.json({ shares: dbUserShares(db, userId).map(mapShare) });
+      const rows = dbUserShares(db, userId);
+      const shareIds = rows.map((row) => row.id);
+      const { reactionCountsByShareId, viewerReactionKeyByShareId } = dbShareReactionState(
+        db,
+        shareIds,
+        req.session.userId,
+      );
+
+      res.json({
+        shares: rows.map((row) =>
+          mapShareWithReactions(
+            row,
+            reactionCountsByShareId.get(row.id) ?? createEmptyReactionCounts(),
+            viewerReactionKeyByShareId.get(row.id) ?? null,
+          ),
+        ),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.put("/api/shares/:shareId/reaction", requireAuth, (req, res, next) => {
+    try {
+      const shareId = parseIntParam(req.params.shareId);
+      const body = z.object({ reactionKey: reactionSchema }).parse(req.body);
+      const share = dbGetShare(db, shareId);
+      if (!share) throw httpError(404, "Share not found");
+      if (share.user_id === req.session.userId) throw httpError(403, "Forbidden");
+
+      db.prepare(
+        `INSERT INTO share_reactions (share_id, user_id, reaction_key)
+         VALUES (?, ?, ?)
+         ON CONFLICT(share_id, user_id) DO UPDATE SET
+           reaction_key = excluded.reaction_key,
+           updated_at = datetime('now')`,
+      ).run(shareId, req.session.userId, body.reactionKey);
+
+      res.json({ ok: true });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.delete("/api/shares/:shareId/reaction", requireAuth, (req, res, next) => {
+    try {
+      const shareId = parseIntParam(req.params.shareId);
+      const share = dbGetShare(db, shareId);
+      if (!share) throw httpError(404, "Share not found");
+      if (share.user_id === req.session.userId) throw httpError(403, "Forbidden");
+
+      db.prepare("DELETE FROM share_reactions WHERE share_id = ? AND user_id = ?").run(
+        shareId,
+        req.session.userId,
+      );
+
+      res.json({ ok: true });
     } catch (e) {
       next(e);
     }
@@ -619,8 +751,18 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
         .parse(req.query);
 
       const rows = dbSharesFeed(db, query.limit, query.cursor ?? null);
+      const shareIds = rows.map((row) => row.id);
+      const { reactionCountsByShareId, viewerReactionKeyByShareId } = dbShareReactionState(
+        db,
+        shareIds,
+        req.session.userId,
+      );
       const items = rows.map((row) => ({
-        ...mapShare(row),
+        ...mapShareWithReactions(
+          row,
+          reactionCountsByShareId.get(row.id) ?? createEmptyReactionCounts(),
+          viewerReactionKeyByShareId.get(row.id) ?? null,
+        ),
         userName: row.user_name,
         userAvatarUrl: row.user_avatar_url
       }));
@@ -1031,11 +1173,24 @@ function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret:
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────
 
-const env = getEnv();
-const db = openDb(env.DATABASE_PATH);
-const app = createApp(db, env.QQMUSIC_BASE_URL, env.CORS_ORIGIN, env.SESSION_SECRET, env.SECURE_COOKIE, env.TRUST_PROXY);
+const isMainModule = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
 
-app.listen(env.PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[api] listening on http://127.0.0.1:${env.PORT}`);
-});
+if (isMainModule) {
+  const env = getEnv();
+  const db = openDb(env.DATABASE_PATH);
+  const app = createApp(
+    db,
+    env.QQMUSIC_BASE_URL,
+    env.CORS_ORIGIN,
+    env.SESSION_SECRET,
+    env.SECURE_COOKIE,
+    env.TRUST_PROXY,
+  );
+
+  app.listen(env.PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`[api] listening on http://127.0.0.1:${env.PORT}`);
+  });
+}
