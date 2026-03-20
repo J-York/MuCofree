@@ -129,6 +129,21 @@ export function openDb(databasePath: string): Db {
 
     CREATE INDEX IF NOT EXISTS idx_shares_user_id_created_at ON shares(user_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS share_reactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      share_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      reaction_key TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (share_id) REFERENCES shares(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(share_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_share_reactions_share_id_reaction_key
+      ON share_reactions(share_id, reaction_key);
+
     CREATE TABLE IF NOT EXISTS playlist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
