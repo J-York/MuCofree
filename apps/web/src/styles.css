@@ -712,6 +712,68 @@ button {
   font-style: italic;
 }
 
+.share-reaction-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.share-reaction-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--warm-200);
+  border-radius: 999px;
+  background: var(--cream);
+  color: var(--ink-mid);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.share-reaction-chip:hover:not(:disabled) {
+  border-color: var(--teal-mid);
+  background: var(--teal-light);
+  color: var(--teal);
+}
+
+.share-reaction-chip.is-selected {
+  border-color: var(--teal);
+  background: var(--teal-light);
+  color: var(--teal);
+}
+
+.share-reaction-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.share-reaction-chip-emoji {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.share-reaction-chip-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--warm-100);
+  color: var(--ink-light);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.share-reaction-chip.is-selected .share-reaction-chip-count {
+  background: rgba(45, 106, 106, 0.16);
+  color: var(--teal);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Player Bar
 ═══════════════════════════════════════════════════════════════ */
