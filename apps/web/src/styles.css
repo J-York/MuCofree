@@ -716,7 +716,6 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
 }
 
 .share-reaction-chip {
@@ -751,6 +750,13 @@ button {
 .share-reaction-chip:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.share-reaction-chip.is-selected:disabled {
+  opacity: 0.8;
+  border-color: var(--teal);
+  background: var(--teal-light);
+  color: var(--teal);
 }
 
 .share-reaction-chip-emoji {

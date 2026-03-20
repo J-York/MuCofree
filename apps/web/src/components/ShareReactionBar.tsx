@@ -18,7 +18,13 @@ export default function ShareReactionBar({
   const isDisabled = disabled || pending;
 
   return (
-    <div className="share-reaction-bar" data-testid="share-reaction-bar" aria-busy={pending || undefined}>
+    <div
+      className="share-reaction-bar"
+      data-testid="share-reaction-bar"
+      role="group"
+      aria-label="Share reactions"
+      aria-busy={pending || undefined}
+    >
       {reactionOptions.map((option) => {
         const isSelected = viewerReactionKey === option.key;
 

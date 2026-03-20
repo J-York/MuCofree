@@ -23,6 +23,8 @@ describe("ShareReactionBar", () => {
       />,
     );
 
+    expect(screen.getByRole("group", { name: /share reactions/i })).toBeInTheDocument();
+
     const boostButton = screen.getByRole("button", { name: /提神/i });
     const loopButton = screen.getByRole("button", { name: /单曲循环/i });
 
