@@ -40,10 +40,10 @@ export type User = {
   name: string;
   avatarUrl: string | null;
   createdAt: string;
-  shares?: Share[];
+  shares?: BaseShare[];
 };
 
-export type Share = {
+export type BaseShare = {
   id: number;
   userId: number;
   songMid: string;
@@ -54,9 +54,12 @@ export type Share = {
   albumName: string | null;
   coverUrl: string | null;
   comment: string | null;
+  createdAt: string;
+};
+
+export type Share = BaseShare & {
   reactionCounts: ReactionCounts;
   viewerReactionKey: ReactionKey | null;
-  createdAt: string;
 };
 
 export type PlaylistSong = {
@@ -194,14 +197,14 @@ export async function apiCreateShare(input: {
   albumName?: string | null;
   coverUrl?: string | null;
   comment?: string | null;
-}): Promise<{ share: Share }> {
+}): Promise<{ share: BaseShare }> {
   const res = await fetch("/api/shares", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
     credentials: "include"
   });
-  return readJson<{ share: Share }>(res);
+  return readJson<{ share: BaseShare }>(res);
 }
 
 export async function apiDeleteShare(shareId: number): Promise<{ ok: boolean }> {
