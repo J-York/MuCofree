@@ -1,3 +1,5 @@
+import type { ReactionCounts, ReactionKey } from "./share-reactions";
+
 // ── JSON helper ──────────────────────────────────────────────────────────────
 
 export type ApiError = {
@@ -52,6 +54,8 @@ export type Share = {
   albumName: string | null;
   coverUrl: string | null;
   comment: string | null;
+  reactionCounts: ReactionCounts;
+  viewerReactionKey: ReactionKey | null;
   createdAt: string;
 };
 
@@ -202,6 +206,27 @@ export async function apiCreateShare(input: {
 
 export async function apiDeleteShare(shareId: number): Promise<{ ok: boolean }> {
   const res = await fetch(`/api/shares/${shareId}`, { method: "DELETE", credentials: "include" });
+  return readJson<{ ok: boolean }>(res);
+}
+
+export async function apiSetShareReaction(
+  shareId: number,
+  reactionKey: ReactionKey,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/shares/${shareId}/reaction`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reactionKey }),
+    credentials: "include",
+  });
+  return readJson<{ ok: boolean }>(res);
+}
+
+export async function apiDeleteShareReaction(shareId: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/shares/${shareId}/reaction`, {
+    method: "DELETE",
+    credentials: "include",
+  });
   return readJson<{ ok: boolean }>(res);
 }
 
