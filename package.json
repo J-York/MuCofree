@@ -7,11 +7,17 @@
   "scripts": {
     "dev": "concurrently -n api,web -c green,cyan \"npm -w @music-share/api run dev\" \"npm -w @music-share/web run dev\"",
     "build": "npm -w @music-share/api run build && npm -w @music-share/web run build",
-    "lint": "echo 'no lint configured'",
+    "lint": "npm -w @music-share/api run lint && npm -w @music-share/web run lint",
     "typecheck": "npm -w @music-share/api run typecheck && npm -w @music-share/web run typecheck",
     "test": "npm -w @music-share/api run test && npm -w @music-share/web run test"
   },
   "devDependencies": {
-    "concurrently": "^9.0.0"
+    "@eslint/js": "^9.17.0",
+    "concurrently": "^9.0.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.2",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "typescript-eslint": "^8.18.2"
   }
 }

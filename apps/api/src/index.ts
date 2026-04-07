@@ -21,6 +21,7 @@ import {
   qqSongUrl,
   qqTop
 } from "./qqmusic.js";
+import { basicSecurityHeaders, createAuthRateLimiter } from "./security.js";
 
 // ── Row types ──────────────────────────────────────────────────────────────
 
@@ -349,11 +350,13 @@ function dbShareReactionState(db: Db, shareIds: number[], viewerUserId?: number)
 
 export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, sessionSecret: string, secureCookie: boolean, trustProxy: boolean) {
   const qq = createQqMusicClient(qqBaseUrl);
+  const authRateLimiter = createAuthRateLimiter();
 
   const app = express();
   app.disable("x-powered-by");
   if (trustProxy) app.set("trust proxy", 1);
 
+  app.use(basicSecurityHeaders);
   app.use(
     cors({
       origin: corsOrigin,
@@ -398,7 +401,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
 
   // ── Auth routes ──────────────────────────────────────────────────────────
 
-  app.post("/api/auth/register", async (req, res, next) => {
+  app.post("/api/auth/register", authRateLimiter, async (req, res, next) => {
     try {
       const body = z
         .object({
@@ -429,7 +432,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
     }
   });
 
-  app.post("/api/auth/login", async (req, res, next) => {
+  app.post("/api/auth/login", authRateLimiter, async (req, res, next) => {
     try {
       const body = z
         .object({
