@@ -184,10 +184,23 @@ export default function Player() {
     };
   }, [audioRef, audioUrl, next, playMode, setPlayingState]);
 
+  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
+    const audio = audioRef.current;
+    if (!audio || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audio.currentTime = ratio * duration;
+  }
+
   if (!currentSong && !loadingMid && !errorMsg) return null;
 
   return (
     <div className="player-bar">
+      <div className="player-progress-bar" onClick={handleProgressClick}>
+        <div className="player-progress-fill" style={{ width: `${progressPercent}%` }} />
+      </div>
       <div className="player-inner">
         <div className="player-song-info">
           {currentSong?.coverUrl && safeUrl(currentSong.coverUrl) && !coverError ? (
