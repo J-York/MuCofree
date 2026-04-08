@@ -18,9 +18,12 @@ import {
 import {
   createQqMusicClient,
   qqCover,
+  qqPlaylist,
   qqSearch,
   qqSongUrl,
-  qqTop
+  qqTop,
+  normalizeQqPlaylistPayload,
+  parseQqPlaylistSource,
 } from "./qqmusic.js";
 import { basicSecurityHeaders, createAuthRateLimiter } from "./security.js";
 
@@ -178,9 +181,12 @@ function splitSingerNames(value: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-function httpError(status: number, message: string) {
-  const err = new Error(message) as Error & { status?: number };
+function httpError(status: number, message: string, options?: { expose?: boolean }) {
+  const err = new Error(message) as Error & { status?: number; expose?: boolean };
   err.status = status;
+  if (options?.expose) {
+    err.expose = true;
+  }
   return err;
 }
 const SHARE_ALREADY_EXISTS_MESSAGE = "这首歌已经分享过了";
@@ -241,6 +247,7 @@ function mapShareWithReactions(
 
 const DEFAULT_PLAYLIST_NAME = "我的收藏";
 const DEFAULT_PLAYLIST_DESCRIPTION = "系统默认歌单";
+const PLAYLIST_ITEMS_MAX_LIMIT = 500;
 
 const PLAYLIST_ROLE_LEVEL: Record<PlaylistRole, number> = {
   viewer: 1,
@@ -254,6 +261,31 @@ function parsePlaylistIdParam(value: string): string {
     throw httpError(400, "Invalid playlist id");
   }
   return playlistId;
+}
+
+function mapQqPlaylistImportError(err: unknown) {
+  if (err instanceof Error) {
+    if (err.message === "QQ playlist unavailable") {
+      return httpError(404, "QQ 歌单不存在或不可访问");
+    }
+    if (err.message === "QQ playlist payload invalid") {
+      return httpError(502, "QQ 歌单响应格式异常", { expose: true });
+    }
+    if (err.message.startsWith("Upstream request timed out")) {
+      return httpError(502, "QQ 歌单加载超时", { expose: true });
+    }
+
+    const statusMatch = err.message.match(/^Upstream request failed: (\d+)/);
+    if (statusMatch) {
+      const upstreamStatus = Number.parseInt(statusMatch[1] ?? "", 10);
+      if (upstreamStatus === 404) {
+        return httpError(404, "QQ 歌单不存在或不可访问");
+      }
+      return httpError(502, "QQ 歌单加载失败", { expose: true });
+    }
+  }
+
+  return httpError(502, "QQ 歌单加载失败", { expose: true });
 }
 
 function isPlaylistRoleAllowed(actual: PlaylistRole, needed: PlaylistRole) {
@@ -1304,7 +1336,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const playlistId = parsePlaylistIdParam(req.params.playlistId);
       const query = z
         .object({
-          limit: z.coerce.number().int().positive().max(500).default(100),
+          limit: z.coerce.number().int().positive().max(PLAYLIST_ITEMS_MAX_LIMIT).default(100),
           offset: z.coerce.number().int().min(0).default(0),
         })
         .parse(req.query);
@@ -1319,6 +1351,135 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         total,
         nextOffset,
         revision: access.revision,
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post("/api/playlists/:playlistId/import/qq", requireAuth, async (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const body = z
+        .object({
+          source: z.string().trim().min(1).max(1000),
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.body);
+
+      const access = authorizePlaylistAccess(db, userId, playlistId, "editor");
+      if (access.revision !== body.expectedRevision) {
+        throw httpError(409, "Playlist revision conflict");
+      }
+      const sourcePlaylistId = parseQqPlaylistSource(body.source);
+      if (!sourcePlaylistId) {
+        throw httpError(400, "无法识别 QQ 歌单链接或 ID");
+      }
+
+      let normalizedPlaylist: ReturnType<typeof normalizeQqPlaylistPayload>;
+      try {
+        const upstreamPayload = await qqPlaylist(qq, { id: sourcePlaylistId });
+        normalizedPlaylist = normalizeQqPlaylistPayload(upstreamPayload);
+      } catch (err) {
+        throw mapQqPlaylistImportError(err);
+      }
+
+      // All reads/writes below run in one DB transaction (existing mids, inserts, bump).
+      // Re-check access + revision after upstream await so a concurrent request cannot
+      // leave us inserting with a stale role or playlist revision.
+      const importPlaylist = db.transaction(() => {
+        const accessInTxn = dbGetPlaylistAccess(db, userId, playlistId);
+        if (!accessInTxn) throw httpError(404, "Playlist not found");
+        if (!isPlaylistRoleAllowed(accessInTxn.member_role, "editor")) {
+          throw httpError(403, "Forbidden");
+        }
+        if (accessInTxn.revision !== body.expectedRevision) {
+          throw httpError(409, "Playlist revision conflict");
+        }
+
+        const existingSongRows = db.prepare(
+          "SELECT song_mid FROM playlist_items WHERE playlist_id = ?"
+        ).all(playlistId) as Array<{ song_mid: string }>;
+        const existingSongMids = new Set(existingSongRows.map((row) => row.song_mid));
+
+        const nextPositionRow = db.prepare(
+          "SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM playlist_items WHERE playlist_id = ?"
+        ).get(playlistId) as { next_position: number };
+
+        const insertItem = db.prepare(
+          `INSERT INTO playlist_items (
+             playlist_id,
+             song_mid,
+             song_title,
+             song_subtitle,
+             singer_name,
+             album_mid,
+             album_name,
+             cover_url,
+             position,
+             added_by_user_id
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        );
+
+        let nextPosition = nextPositionRow.next_position;
+        let importedCount = 0;
+        let skippedCount = 0;
+        let truncatedSourceSongCount = 0;
+
+        for (const [index, song] of normalizedPlaylist.songs.entries()) {
+          if (importedCount >= PLAYLIST_ITEMS_MAX_LIMIT) {
+            truncatedSourceSongCount = normalizedPlaylist.songs.length - index;
+            break;
+          }
+
+          if (existingSongMids.has(song.songMid)) {
+            skippedCount += 1;
+            continue;
+          }
+
+          insertItem.run(
+            playlistId,
+            song.songMid,
+            song.songTitle,
+            song.songSubtitle,
+            song.singerName,
+            song.albumMid,
+            song.albumName,
+            song.coverUrl,
+            nextPosition,
+            userId,
+          );
+
+          existingSongMids.add(song.songMid);
+          nextPosition += 1;
+          importedCount += 1;
+        }
+
+        const latestPlaylist = dbGetPlaylistById(db, playlistId);
+        if (!latestPlaylist) throw httpError(404, "Playlist not found");
+
+        const revision = importedCount > 0
+          ? bumpPlaylistRevision(db, playlistId, body.expectedRevision)
+          : latestPlaylist.revision;
+
+        return { importedCount, skippedCount, revision, truncatedSourceSongCount };
+      });
+
+      const result = importPlaylist();
+      res.json({
+        importedCount: result.importedCount,
+        skippedCount: result.skippedCount,
+        truncatedSourceSongCount: result.truncatedSourceSongCount,
+        wasTruncated: result.truncatedSourceSongCount > 0,
+        revision: result.revision,
+        sourcePlaylist: {
+          id: normalizedPlaylist.id,
+          title: normalizedPlaylist.title,
+        },
+        sourceSongCount: normalizedPlaylist.songs.length,
+        targetPlaylistId: access.id,
       });
     } catch (e) {
       next(e);
@@ -2047,7 +2208,8 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
   });
 
   // ── Error handler ─────────────────────────────────────────────────────────
-  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    void next;
     if (err instanceof z.ZodError) {
       res.status(400).json({
         error: {
@@ -2058,9 +2220,9 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       return;
     }
 
-    const e = err as Error & { status?: number };
+    const e = err as Error & { status?: number; expose?: boolean };
     const status = typeof e.status === "number" ? e.status : 500;
-    const message = status >= 500 ? "Internal Server Error" : e.message;
+    const message = status >= 500 && e.expose !== true ? "Internal Server Error" : e.message;
     res.status(status).json({ error: { message } });
   });
 
@@ -2086,7 +2248,6 @@ if (isMainModule) {
   );
 
   app.listen(env.PORT, () => {
-    // eslint-disable-next-line no-console
     console.log(`[api] listening on http://127.0.0.1:${env.PORT}`);
   });
 }
