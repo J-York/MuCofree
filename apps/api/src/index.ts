@@ -1304,7 +1304,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const playlistId = parsePlaylistIdParam(req.params.playlistId);
       const query = z
         .object({
-          limit: z.coerce.number().int().positive().max(200).default(100),
+          limit: z.coerce.number().int().positive().max(500).default(100),
           offset: z.coerce.number().int().min(0).default(0),
         })
         .parse(req.query);
