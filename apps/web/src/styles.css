@@ -176,6 +176,55 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Playlist Layout
+═══════════════════════════════════════════════════════════════ */
+.playlist-grid {
+  gap: 16px !important;
+}
+
+.playlist-list-col,
+.playlist-detail-col {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+/* For webkit scrollbar */
+.playlist-list-col::-webkit-scrollbar,
+.playlist-detail-col::-webkit-scrollbar {
+  width: 6px;
+}
+.playlist-list-col::-webkit-scrollbar-thumb,
+.playlist-detail-col::-webkit-scrollbar-thumb {
+  background: var(--warm-200);
+  border-radius: 4px;
+}
+.dark .playlist-list-col::-webkit-scrollbar-thumb,
+.dark .playlist-detail-col::-webkit-scrollbar-thumb {
+  background: var(--warm-300);
+}
+
+@media (max-width: 768px) {
+  .playlist-grid {
+    display: flex;
+    flex-direction: column;
+  }
+  .playlist-list-col,
+  .playlist-detail-col {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+  .playlist-list-col {
+    max-height: 250px;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--warm-200);
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Header / Nav
 ═══════════════════════════════════════════════════════════════ */
 .site-header {

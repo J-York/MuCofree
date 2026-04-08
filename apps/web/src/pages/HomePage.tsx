@@ -668,8 +668,8 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="grid-2" style={{ alignItems: "start", gap: 12 }}>
-              <div className="stack-sm">
+            <div className="grid-2 playlist-grid" style={{ alignItems: "start", gap: 12 }}>
+              <div className="stack-sm playlist-list-col">
                 {playlistsLoading ? (
                   <div className="empty-state">
                     <div className="spinner" />
@@ -694,7 +694,7 @@ export default function HomePage() {
                 )}
               </div>
 
-              <div>
+              <div className="playlist-detail-col">
                 {!selectedPlaylist ? (
                   <div className="empty-state">
                     <div className="empty-icon">📁</div>
