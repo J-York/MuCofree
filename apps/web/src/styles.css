@@ -1431,6 +1431,47 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Sortable Song Item (drag-and-drop)
+═══════════════════════════════════════════════════════════════ */
+.sortable-song-item {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.sortable-song-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.drag-handle {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 44px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink-ghost);
+  cursor: grab;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  transition: color 0.15s ease, background 0.15s ease;
+  touch-action: none;
+}
+
+.drag-handle:hover {
+  color: var(--teal);
+  background: var(--teal-light);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+  color: var(--teal);
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Misc utilities
 ═══════════════════════════════════════════════════════════════ */
 .truncate {

@@ -1,5 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
 import {
   apiGetPlaylistDetail,
   apiGetPlaylistItems,
@@ -17,6 +31,7 @@ import {
 } from "../api";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
 import SongCard from "../components/SongCard";
+import SortableSongItem from "../components/SortableSongItem";
 
 export default function PlaylistDetailPage() {
   const { playlistId } = useParams<{ playlistId: string }>();
@@ -128,29 +143,45 @@ export default function PlaylistDetailPage() {
     }
   }
 
-  async function movePlaylistItem(songMid: string, direction: -1 | 1) {
-    if (!playlist) return;
+  const [reordering, setReordering] = useState(false);
 
-    const currentIndex = items.findIndex((song) => song.songMid === songMid);
-    if (currentIndex === -1) return;
-    const targetIndex = currentIndex + direction;
-    if (targetIndex < 0 || targetIndex >= items.length) return;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
-    const songMids = items.map((song) => song.songMid);
-    [songMids[currentIndex], songMids[targetIndex]] = [songMids[targetIndex]!, songMids[currentIndex]!];
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id || !playlist || reordering) return;
 
-    try {
-      const result = await apiReorderPlaylistItems(playlist.id, songMids, playlist.revision);
-      setItems(result.items);
-      setPlaylist((prev) => prev ? { ...prev, revision: result.revision } : prev);
-    } catch (e) {
-      const message = (e as Error).message;
-      if (message === "Playlist revision conflict") {
-        await reloadAll(playlist.id);
+      const oldIndex = items.findIndex((s) => s.songMid === active.id);
+      const newIndex = items.findIndex((s) => s.songMid === over.id);
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      const reordered = arrayMove(items, oldIndex, newIndex);
+      setItems(reordered);
+
+      const songMids = reordered.map((s) => s.songMid);
+      setReordering(true);
+      try {
+        const result = await apiReorderPlaylistItems(playlist.id, songMids, playlist.revision);
+        setItems(result.items);
+        setPlaylist((prev) => (prev ? { ...prev, revision: result.revision } : prev));
+      } catch (e) {
+        const message = (e as Error).message;
+        if (message === "Playlist revision conflict") {
+          await reloadAll(playlist.id);
+        } else {
+          setItems(items);
+        }
+        showToast(message);
+      } finally {
+        setReordering(false);
       }
-      showToast(message);
-    }
-  }
+    },
+    [items, playlist, reordering],
+  );
 
   async function renamePlaylist() {
     if (!playlist) return;
@@ -454,40 +485,39 @@ export default function PlaylistDetailPage() {
             <div className="spinner" />
           </div>
         ) : items.length ? (
-          <div className="stack-sm">
-            {items.map((song, index) => (
-              <div key={song.songMid} className="stack-sm">
-                <SongCard
-                  item={song}
-                  active={isCurrentSong(song.songMid)}
-                  playing={isCurrentSong(song.songMid) && playing && currentSong?.mid === song.songMid}
-                  loading={loadingMid === song.songMid}
-                  onPlay={playPlaylistSong}
-                  secondAction={{
-                    label: "移除",
-                    onClick: () =>
-                      void removeFromPlaylist(song.songMid, song.songTitle ?? song.songMid),
-                  }}
-                />
-                <div className="row" style={{ gap: 8 }}>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void movePlaylistItem(song.songMid, -1)}
-                    disabled={index === 0}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={(e) => void handleDragEnd(e)}
+          >
+            <SortableContext
+              items={items.map((s) => s.songMid)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="stack-sm">
+                {items.map((song) => (
+                  <SortableSongItem
+                    key={song.songMid}
+                    id={song.songMid}
+                    disabled={!canEdit || reordering}
                   >
-                    上移
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void movePlaylistItem(song.songMid, 1)}
-                    disabled={index === items.length - 1}
-                  >
-                    下移
-                  </button>
-                </div>
+                    <SongCard
+                      item={song}
+                      active={isCurrentSong(song.songMid)}
+                      playing={isCurrentSong(song.songMid) && playing && currentSong?.mid === song.songMid}
+                      loading={loadingMid === song.songMid}
+                      onPlay={playPlaylistSong}
+                      secondAction={canEdit ? {
+                        label: "移除",
+                        onClick: () =>
+                          void removeFromPlaylist(song.songMid, song.songTitle ?? song.songMid),
+                      } : undefined}
+                    />
+                  </SortableSongItem>
+                ))}
               </div>
-            ))}
-          </div>
+            </SortableContext>
+          </DndContext>
         ) : (
           <div className="empty-state">
             <div className="empty-icon">🎵</div>
