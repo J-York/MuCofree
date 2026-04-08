@@ -1385,7 +1385,19 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         throw mapQqPlaylistImportError(err);
       }
 
+      // All reads/writes below run in one DB transaction (existing mids, inserts, bump).
+      // Re-check access + revision after upstream await so a concurrent request cannot
+      // leave us inserting with a stale role or playlist revision.
       const importPlaylist = db.transaction(() => {
+        const accessInTxn = dbGetPlaylistAccess(db, userId, playlistId);
+        if (!accessInTxn) throw httpError(404, "Playlist not found");
+        if (!isPlaylistRoleAllowed(accessInTxn.member_role, "editor")) {
+          throw httpError(403, "Forbidden");
+        }
+        if (accessInTxn.revision !== body.expectedRevision) {
+          throw httpError(409, "Playlist revision conflict");
+        }
+
         const existingSongRows = db.prepare(
           "SELECT song_mid FROM playlist_items WHERE playlist_id = ?"
         ).all(playlistId) as Array<{ song_mid: string }>;
