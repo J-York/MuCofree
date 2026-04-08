@@ -233,7 +233,7 @@ export default function UserPage() {
             现在分享歌曲需要先加入你的“我的歌单”，再从歌单里选择发布。
           </div>
           <div className="row">
-            <Link className="btn btn-primary" to="/?tab=playlist">
+            <Link className="btn btn-primary" to="/playlists">
               去我的歌单分享
             </Link>
           </div>

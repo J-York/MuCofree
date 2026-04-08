@@ -10,6 +10,8 @@ import HomePage from "./pages/HomePage";
 import PlazaPage from "./pages/PlazaPage";
 import UserPage from "./pages/UserPage";
 import PlaylistSharePage from "./pages/PlaylistSharePage";
+import PlaylistListPage from "./pages/PlaylistListPage";
+import PlaylistDetailPage from "./pages/PlaylistDetailPage";
 
 // ── Route guard ───────────────────────────────────────────────────────────────
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -57,12 +59,20 @@ function SiteHeader() {
             广场
           </NavLink>
           {user ? (
-            <NavLink
-              to={`/user/${user.id}`}
-              className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
-            >
-              我的主页
-            </NavLink>
+            <>
+              <NavLink
+                to={`/user/${user.id}`}
+                className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
+              >
+                我的主页
+              </NavLink>
+              <NavLink
+                to="/playlists"
+                className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
+              >
+                我的歌单
+              </NavLink>
+            </>
           ) : null}
         </nav>
 
@@ -135,6 +145,22 @@ function AppShell() {
               }
             />
             <Route path="/plaza" element={<PlazaPage />} />
+            <Route
+              path="/playlists"
+              element={
+                <RequireAuth>
+                  <PlaylistListPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/playlists/:playlistId"
+              element={
+                <RequireAuth>
+                  <PlaylistDetailPage />
+                </RequireAuth>
+              }
+            />
             <Route path="/user/:userId" element={<UserPage />} />
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
