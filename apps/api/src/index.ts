@@ -247,6 +247,7 @@ function mapShareWithReactions(
 
 const DEFAULT_PLAYLIST_NAME = "我的收藏";
 const DEFAULT_PLAYLIST_DESCRIPTION = "系统默认歌单";
+const PLAYLIST_ITEMS_MAX_LIMIT = 500;
 
 const PLAYLIST_ROLE_LEVEL: Record<PlaylistRole, number> = {
   viewer: 1,
@@ -1335,7 +1336,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const playlistId = parsePlaylistIdParam(req.params.playlistId);
       const query = z
         .object({
-          limit: z.coerce.number().int().positive().max(500).default(100),
+          limit: z.coerce.number().int().positive().max(PLAYLIST_ITEMS_MAX_LIMIT).default(100),
           offset: z.coerce.number().int().min(0).default(0),
         })
         .parse(req.query);
@@ -1368,6 +1369,9 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         .parse(req.body);
 
       const access = authorizePlaylistAccess(db, userId, playlistId, "editor");
+      if (access.revision !== body.expectedRevision) {
+        throw httpError(409, "Playlist revision conflict");
+      }
       const sourcePlaylistId = parseQqPlaylistSource(body.source);
       if (!sourcePlaylistId) {
         throw httpError(400, "无法识别 QQ 歌单链接或 ID");
@@ -1410,8 +1414,14 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         let nextPosition = nextPositionRow.next_position;
         let importedCount = 0;
         let skippedCount = 0;
+        let truncatedSourceSongCount = 0;
 
-        for (const song of normalizedPlaylist.songs) {
+        for (const [index, song] of normalizedPlaylist.songs.entries()) {
+          if (importedCount >= PLAYLIST_ITEMS_MAX_LIMIT) {
+            truncatedSourceSongCount = normalizedPlaylist.songs.length - index;
+            break;
+          }
+
           if (existingSongMids.has(song.songMid)) {
             skippedCount += 1;
             continue;
@@ -1442,13 +1452,15 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
           ? bumpPlaylistRevision(db, playlistId, body.expectedRevision)
           : latestPlaylist.revision;
 
-        return { importedCount, skippedCount, revision };
+        return { importedCount, skippedCount, revision, truncatedSourceSongCount };
       });
 
       const result = importPlaylist();
       res.json({
         importedCount: result.importedCount,
         skippedCount: result.skippedCount,
+        truncatedSourceSongCount: result.truncatedSourceSongCount,
+        wasTruncated: result.truncatedSourceSongCount > 0,
         revision: result.revision,
         sourcePlaylist: {
           id: normalizedPlaylist.id,

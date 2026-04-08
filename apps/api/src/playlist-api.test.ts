@@ -286,6 +286,8 @@ describe("playlist api", () => {
     expect(importResponse.body).toMatchObject({
       importedCount: 2,
       skippedCount: 0,
+      truncatedSourceSongCount: 0,
+      wasTruncated: false,
       sourcePlaylist: {
         id: 8052190267,
         title: "QQ 导入歌单",
@@ -315,6 +317,63 @@ describe("playlist api", () => {
       skippedCount: 2,
       revision: importResponse.body.revision,
     });
+  });
+
+  it("caps QQ imports at 500 new songs and reports truncation", async () => {
+    await register(ownerAgent, "playlist_cap_owner");
+    const created = await createPlaylist(ownerAgent, "Import Target");
+
+    const addExistingSongResponse = await ownerAgent.post(`/api/playlists/${created.id}/items`).send({
+      songMid: "existing-song",
+      songTitle: "Existing Song",
+      singerName: "Existing Singer",
+      expectedRevision: created.revision,
+    });
+    expect(addExistingSongResponse.status).toBe(201);
+
+    qqPlaylistResponder = () => ({
+      status: 200,
+      body: buildQqPlaylistBody({
+        id: 8052190267,
+        title: "超长 QQ 歌单",
+        songs: [
+          {
+            mid: "existing-song",
+            title: "Existing Song",
+            singerName: "Existing Singer",
+            albumMid: "existing-album",
+            albumName: "Existing Album",
+          },
+          ...Array.from({ length: 501 }, (_, index) => ({
+            mid: `qq-cap-song-${index + 1}`,
+            title: `QQ Cap Song ${index + 1}`,
+            singerName: `Singer ${index + 1}`,
+            albumMid: `qq-cap-album-${index + 1}`,
+            albumName: `Album ${index + 1}`,
+          })),
+        ],
+      }),
+    });
+
+    const importResponse = await ownerAgent.post(`/api/playlists/${created.id}/import/qq`).send({
+      source: "8052190267",
+      expectedRevision: addExistingSongResponse.body.revision,
+    });
+
+    expect(importResponse.status).toBe(200);
+    expect(importResponse.body).toMatchObject({
+      importedCount: 500,
+      skippedCount: 1,
+      truncatedSourceSongCount: 1,
+      wasTruncated: true,
+      sourceSongCount: 502,
+    });
+
+    const itemsResponse = await ownerAgent
+      .get(`/api/playlists/${created.id}/items`)
+      .query({ limit: 500 });
+    expect(itemsResponse.status).toBe(200);
+    expect(itemsResponse.body.total).toBe(501);
   });
 
   it("rejects invalid QQ playlist sources", async () => {
@@ -366,7 +425,7 @@ describe("playlist api", () => {
     expect(response.body.error.message).toBe("QQ 歌单加载失败");
   });
 
-  it("rolls back imports when the playlist revision is stale", async () => {
+  it("rejects stale revisions before contacting QQ upstream", async () => {
     await register(ownerAgent, "playlist_stale_revision_owner");
     const created = await createPlaylist(ownerAgent, "Import Target");
 
@@ -378,8 +437,12 @@ describe("playlist api", () => {
     });
     expect(addSongResponse.status).toBe(201);
 
+    let qqPlaylistRequestCount = 0;
     qqPlaylistResponder = () => ({
-      status: 200,
+      status: (() => {
+        qqPlaylistRequestCount += 1;
+        return 200;
+      })(),
       body: buildQqPlaylistBody({
         id: 8052190267,
         title: "QQ 导入歌单",
@@ -401,6 +464,7 @@ describe("playlist api", () => {
     });
     expect(staleImportResponse.status).toBe(409);
     expect(staleImportResponse.body.error.message).toBe("Playlist revision conflict");
+    expect(qqPlaylistRequestCount).toBe(0);
 
     const itemsAfterFailedImport = await ownerAgent.get(`/api/playlists/${created.id}/items`);
     expect(itemsAfterFailedImport.status).toBe(200);

@@ -141,6 +141,8 @@ export type PlaylistItemsResponse = {
 export type PlaylistImportQqResponse = {
   importedCount: number;
   skippedCount: number;
+  truncatedSourceSongCount: number;
+  wasTruncated: boolean;
   revision: number;
   sourcePlaylist: {
     id: number;

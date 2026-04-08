@@ -72,6 +72,7 @@ export default function HomePage() {
   const [dailyRefreshLockedUntil, setDailyRefreshLockedUntil] = useState<number>(0);
   const [dailyRefreshLocked, setDailyRefreshLocked] = useState(false);
   const dailyLoadedRef = useRef(false);
+  const selectedPlaylistIdRef = useRef<string | null>(null);
 
   // Toast
   const [toast, setToast] = useState<string | null>(null);
@@ -180,6 +181,10 @@ export default function HomePage() {
       loadPlaylistItems(selectedPlaylistId),
       loadPlaylistMembers(selectedPlaylistId),
     ]);
+  }, [selectedPlaylistId]);
+
+  useEffect(() => {
+    selectedPlaylistIdRef.current = selectedPlaylistId;
   }, [selectedPlaylistId]);
 
   useEffect(() => {
@@ -461,19 +466,31 @@ export default function HomePage() {
       return;
     }
 
+    const importTargetPlaylistId = selectedPlaylist.id;
+    const importTargetRevision = selectedPlaylist.revision;
+
     try {
       setPlaylistImportLoading(true);
-      const result = await apiImportQqPlaylist(selectedPlaylist.id, {
+      const result = await apiImportQqPlaylist(importTargetPlaylistId, {
         source: trimmedSource,
-        expectedRevision: selectedPlaylist.revision,
+        expectedRevision: importTargetRevision,
       });
-      await reloadSelectedPlaylistData(selectedPlaylist.id);
       const sourceTitle = result.sourcePlaylist.title ? `《${result.sourcePlaylist.title}》` : "QQ 歌单";
-      showToast(`${sourceTitle} 导入完成：新增 ${result.importedCount} 首，跳过 ${result.skippedCount} 首`);
+
+      if (selectedPlaylistIdRef.current === importTargetPlaylistId) {
+        await reloadSelectedPlaylistData(importTargetPlaylistId);
+      } else {
+        await loadPlaylists(selectedPlaylistIdRef.current);
+      }
+
+      const truncatedSuffix = result.truncatedSourceSongCount > 0
+        ? `，另有 ${result.truncatedSourceSongCount} 首因单次导入上限未处理`
+        : "";
+      showToast(`${sourceTitle} 导入完成：新增 ${result.importedCount} 首，跳过 ${result.skippedCount} 首${truncatedSuffix}`);
     } catch (e) {
       const message = (e as Error).message;
-      if (message === "Playlist revision conflict") {
-        await reloadSelectedPlaylistData(selectedPlaylist.id);
+      if (message === "Playlist revision conflict" && selectedPlaylistIdRef.current === importTargetPlaylistId) {
+        await reloadSelectedPlaylistData(importTargetPlaylistId);
       }
       showToast(message);
     } finally {
