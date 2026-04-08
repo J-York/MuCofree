@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  apiAddSongToDefaultPlaylist,
   apiDeleteShare,
   apiDeleteShareReaction,
+  apiGetDefaultPlaylist,
+  apiGetPlaylistItems,
   apiGetUser,
-  apiAddToPlaylist,
-  apiGetPlaylist,
   apiSetShareReaction,
   apiUserShares,
   type Share,
-  type User
+  type User,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
@@ -58,8 +59,13 @@ export default function UserPage() {
       setProfileUser(uRes.user);
       setShares(sRes.shares);
       if (me && me.id !== userId) {
-        const plRes = await apiGetPlaylist();
-        setPlaylistMids(new Set(plRes.songs.map((s) => s.songMid)));
+        const defaultPlaylist = await apiGetDefaultPlaylist();
+        if (!defaultPlaylist) {
+          setPlaylistMids(new Set());
+        } else {
+          const itemsRes = await apiGetPlaylistItems(defaultPlaylist.id, 0, 500);
+          setPlaylistMids(new Set(itemsRes.items.map((item) => item.songMid)));
+        }
       }
     } catch (e) {
       setError((e as Error).message);
@@ -86,23 +92,26 @@ export default function UserPage() {
 
   async function addToPlaylist(share: Share) {
     try {
-      await apiAddToPlaylist({
+      const result = await apiAddSongToDefaultPlaylist({
         songMid: share.songMid,
         songTitle: share.songTitle,
         songSubtitle: share.songSubtitle,
         singerName: share.singerName,
         albumMid: share.albumMid,
         albumName: share.albumName,
-        coverUrl: share.coverUrl
+        coverUrl: share.coverUrl,
       });
-      appendToPlaylistQueue({
-        mid: share.songMid,
-        title: share.songTitle ?? share.songMid,
-        singer: share.singerName ?? undefined,
-        coverUrl: share.coverUrl ?? undefined
-      });
+      appendToPlaylistQueue(
+        {
+          mid: share.songMid,
+          title: share.songTitle ?? share.songMid,
+          singer: share.singerName ?? undefined,
+          coverUrl: share.coverUrl ?? undefined,
+        },
+        result.playlistId,
+      );
       setPlaylistMids((prev) => new Set([...prev, share.songMid]));
-      showToast(`已添加《${share.songTitle ?? share.songMid}》到我的歌单`);
+      showToast(`已添加《${share.songTitle ?? share.songMid}》到我的收藏`);
     } catch (e) {
       showToast((e as Error).message);
     }

@@ -9,6 +9,7 @@ import LoginPage from "./pages/LoginPage";
 import HomePage from "./pages/HomePage";
 import PlazaPage from "./pages/PlazaPage";
 import UserPage from "./pages/UserPage";
+import PlaylistSharePage from "./pages/PlaylistSharePage";
 
 // ── Route guard ───────────────────────────────────────────────────────────────
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -122,6 +123,14 @@ function AppShell() {
               element={
                 <RequireAuth>
                   <HomePage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/playlist/share/:token"
+              element={
+                <RequireAuth>
+                  <PlaylistSharePage />
                 </RequireAuth>
               }
             />

@@ -1,3 +1,4 @@
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import express from "express";
 import cors from "cors";
@@ -48,9 +49,27 @@ type ShareRow = {
   created_at: string;
 };
 
+type PlaylistVisibility = "private" | "link_readonly" | "link_collab";
+type PlaylistRole = "owner" | "editor" | "viewer";
+type PlaylistMemberStatus = "active" | "pending";
+type PlaylistShareScope = "read" | "edit";
+
 type PlaylistRow = {
+  id: string;
+  owner_user_id: number;
+  name: string;
+  description: string | null;
+  visibility: PlaylistVisibility;
+  revision: number;
+  is_default: number;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+};
+
+type PlaylistItemRow = {
   id: number;
-  user_id: number;
+  playlist_id: string;
   song_mid: string;
   song_title: string | null;
   song_subtitle: string | null;
@@ -58,8 +77,47 @@ type PlaylistRow = {
   album_mid: string | null;
   album_name: string | null;
   cover_url: string | null;
+  position: number;
+  added_by_user_id: number;
   added_at: string;
 };
+
+type PlaylistMemberRow = {
+  id: number;
+  playlist_id: string;
+  user_id: number;
+  role: PlaylistRole;
+  status: PlaylistMemberStatus;
+  invited_by_user_id: number | null;
+  joined_at: string;
+  created_at: string;
+};
+
+type PlaylistShareLinkRow = {
+  id: number;
+  playlist_id: string;
+  token_hash: string;
+  scope: PlaylistShareScope;
+  expires_at: string;
+  max_uses: number | null;
+  used_count: number;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_by_user_id: number;
+  created_at: string;
+};
+
+type PlaylistAccessRow = PlaylistRow & {
+  member_role: PlaylistRole;
+  member_status: PlaylistMemberStatus;
+};
+
+type PlaylistWithRoleRow = PlaylistRow & {
+  member_role: PlaylistRole;
+  member_status: PlaylistMemberStatus;
+  item_count: number;
+};
+
 
 // ── Session augmentation ───────────────────────────────────────────────────
 
@@ -181,10 +239,54 @@ function mapShareWithReactions(
   };
 }
 
+const DEFAULT_PLAYLIST_NAME = "我的收藏";
+const DEFAULT_PLAYLIST_DESCRIPTION = "系统默认歌单";
+
+const PLAYLIST_ROLE_LEVEL: Record<PlaylistRole, number> = {
+  viewer: 1,
+  editor: 2,
+  owner: 3,
+};
+
+function parsePlaylistIdParam(value: string): string {
+  const playlistId = value.trim();
+  if (!playlistId || playlistId.length > 128) {
+    throw httpError(400, "Invalid playlist id");
+  }
+  return playlistId;
+}
+
+function isPlaylistRoleAllowed(actual: PlaylistRole, needed: PlaylistRole) {
+  return PLAYLIST_ROLE_LEVEL[actual] >= PLAYLIST_ROLE_LEVEL[needed];
+}
+
+function hashShareToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function createShareToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
 function mapPlaylist(row: PlaylistRow) {
   return {
     id: row.id,
-    userId: row.user_id,
+    ownerUserId: row.owner_user_id,
+    name: row.name,
+    description: row.description,
+    visibility: row.visibility,
+    revision: row.revision,
+    isDefault: row.is_default === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    archivedAt: row.archived_at,
+  };
+}
+
+function mapPlaylistItem(row: PlaylistItemRow) {
+  return {
+    id: row.id,
+    playlistId: row.playlist_id,
     songMid: row.song_mid,
     songTitle: row.song_title,
     songSubtitle: row.song_subtitle,
@@ -192,7 +294,35 @@ function mapPlaylist(row: PlaylistRow) {
     albumMid: row.album_mid,
     albumName: row.album_name,
     coverUrl: row.cover_url,
-    addedAt: row.added_at
+    position: row.position,
+    addedByUserId: row.added_by_user_id,
+    addedAt: row.added_at,
+  };
+}
+
+function mapPlaylistMember(row: PlaylistMemberRow) {
+  return {
+    userId: row.user_id,
+    role: row.role,
+    status: row.status,
+    invitedByUserId: row.invited_by_user_id,
+    joinedAt: row.joined_at,
+    createdAt: row.created_at,
+  };
+}
+
+function mapPlaylistShareLink(row: PlaylistShareLinkRow) {
+  return {
+    id: row.id,
+    playlistId: row.playlist_id,
+    scope: row.scope,
+    expiresAt: row.expires_at,
+    maxUses: row.max_uses,
+    usedCount: row.used_count,
+    lastUsedAt: row.last_used_at,
+    revokedAt: row.revoked_at,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
   };
 }
 
@@ -281,12 +411,172 @@ function dbUserShares(db: Db, userId: number): ShareRow[] {
   return db.prepare("SELECT * FROM shares WHERE user_id = ? ORDER BY created_at DESC").all(userId) as ShareRow[];
 }
 
-function dbUserPlaylist(db: Db, userId: number): PlaylistRow[] {
-  return db.prepare("SELECT * FROM playlist WHERE user_id = ? ORDER BY added_at DESC").all(userId) as PlaylistRow[];
+function dbGetDefaultPlaylist(db: Db, userId: number): PlaylistRow | undefined {
+  return db.prepare(
+    "SELECT * FROM playlists WHERE owner_user_id = ? AND is_default = 1 AND archived_at IS NULL LIMIT 1"
+  ).get(userId) as PlaylistRow | undefined;
 }
 
-function dbGetPlaylistEntry(db: Db, userId: number, songMid: string): PlaylistRow | undefined {
-  return db.prepare("SELECT * FROM playlist WHERE user_id = ? AND song_mid = ?").get(userId, songMid) as PlaylistRow | undefined;
+function dbGetPlaylistById(db: Db, playlistId: string): PlaylistRow | undefined {
+  return db.prepare("SELECT * FROM playlists WHERE id = ? AND archived_at IS NULL").get(playlistId) as PlaylistRow | undefined;
+}
+
+function dbEnsureDefaultPlaylist(db: Db, userId: number): PlaylistRow {
+  const existing = dbGetDefaultPlaylist(db, userId);
+  if (existing) {
+    db.prepare(
+      `INSERT OR IGNORE INTO playlist_members (playlist_id, user_id, role, status, invited_by_user_id)
+       VALUES (?, ?, 'owner', 'active', NULL)`
+    ).run(existing.id, userId);
+    return existing;
+  }
+
+  const playlistId = randomUUID();
+  db.prepare(
+    `INSERT INTO playlists (id, owner_user_id, name, description, visibility, revision, is_default)
+     VALUES (?, ?, ?, ?, 'private', 1, 1)`
+  ).run(playlistId, userId, DEFAULT_PLAYLIST_NAME, DEFAULT_PLAYLIST_DESCRIPTION);
+
+  db.prepare(
+    `INSERT INTO playlist_members (playlist_id, user_id, role, status, invited_by_user_id)
+     VALUES (?, ?, 'owner', 'active', NULL)`
+  ).run(playlistId, userId);
+
+  const created = dbGetPlaylistById(db, playlistId);
+  if (!created) throw httpError(500, "Failed to create default playlist");
+  return created;
+}
+
+function dbGetPlaylistAccess(db: Db, userId: number, playlistId: string): PlaylistAccessRow | undefined {
+  return db.prepare(
+    `SELECT p.*, m.role AS member_role, m.status AS member_status
+     FROM playlists p
+     JOIN playlist_members m
+       ON m.playlist_id = p.id
+      AND m.user_id = ?
+      AND m.status = 'active'
+     WHERE p.id = ?
+       AND p.archived_at IS NULL`
+  ).get(userId, playlistId) as PlaylistAccessRow | undefined;
+}
+
+function authorizePlaylistAccess(
+  db: Db,
+  userId: number,
+  playlistId: string,
+  neededRole: PlaylistRole,
+): PlaylistAccessRow {
+  const access = dbGetPlaylistAccess(db, userId, playlistId);
+  if (!access) throw httpError(404, "Playlist not found");
+  if (!isPlaylistRoleAllowed(access.member_role, neededRole)) {
+    throw httpError(403, "Forbidden");
+  }
+  return access;
+}
+
+function bumpPlaylistRevision(db: Db, playlistId: string, expectedRevision: number): number {
+  const result = db.prepare(
+    `UPDATE playlists
+     SET revision = revision + 1,
+         updated_at = datetime('now')
+     WHERE id = ?
+       AND revision = ?
+       AND archived_at IS NULL`
+  ).run(playlistId, expectedRevision);
+
+  if (result.changes === 0) {
+    throw httpError(409, "Playlist revision conflict");
+  }
+
+  const row = db.prepare("SELECT revision FROM playlists WHERE id = ?").get(playlistId) as { revision: number } | undefined;
+  if (!row) throw httpError(404, "Playlist not found");
+  return row.revision;
+}
+
+function assertShareLinkUsable(link: PlaylistShareLinkRow, nowMs: number) {
+  if (link.revoked_at) throw httpError(410, "Share link revoked");
+
+  const expiresAtMs = Date.parse(link.expires_at);
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs) {
+    throw httpError(410, "Share link expired");
+  }
+
+  if (typeof link.max_uses === "number" && link.used_count >= link.max_uses) {
+    throw httpError(410, "Share link exhausted");
+  }
+}
+
+function dbListAccessiblePlaylists(
+  db: Db,
+  userId: number,
+  limit: number,
+  offset: number,
+): PlaylistWithRoleRow[] {
+  return db.prepare(
+    `SELECT
+       p.*,
+       m.role AS member_role,
+       m.status AS member_status,
+       COUNT(pi.id) AS item_count
+     FROM playlists p
+     JOIN playlist_members m
+       ON m.playlist_id = p.id
+      AND m.user_id = ?
+      AND m.status = 'active'
+     LEFT JOIN playlist_items pi
+       ON pi.playlist_id = p.id
+     WHERE p.archived_at IS NULL
+     GROUP BY
+       p.id, p.owner_user_id, p.name, p.description, p.visibility, p.revision, p.is_default, p.created_at, p.updated_at, p.archived_at,
+       m.role, m.status
+     ORDER BY p.updated_at DESC, p.created_at DESC, p.id DESC
+     LIMIT ? OFFSET ?`
+  ).all(userId, limit, offset) as PlaylistWithRoleRow[];
+}
+
+function dbCountAccessiblePlaylists(db: Db, userId: number): number {
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM playlists p
+     JOIN playlist_members m
+       ON m.playlist_id = p.id
+      AND m.user_id = ?
+      AND m.status = 'active'
+     WHERE p.archived_at IS NULL`
+  ).get(userId) as { n: number };
+
+  return row.n;
+}
+
+function dbPlaylistItems(db: Db, playlistId: string, limit: number, offset: number): PlaylistItemRow[] {
+  return db.prepare(
+    `SELECT *
+     FROM playlist_items
+     WHERE playlist_id = ?
+     ORDER BY position ASC
+     LIMIT ? OFFSET ?`
+  ).all(playlistId, limit, offset) as PlaylistItemRow[];
+}
+
+function dbPlaylistItemsCount(db: Db, playlistId: string): number {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ?").get(playlistId) as { n: number };
+  return row.n;
+}
+
+function dbPlaylistMembers(db: Db, playlistId: string): PlaylistMemberRow[] {
+  return db.prepare(
+    `SELECT *
+     FROM playlist_members
+     WHERE playlist_id = ?
+     ORDER BY
+       CASE role WHEN 'owner' THEN 3 WHEN 'editor' THEN 2 ELSE 1 END DESC,
+       user_id ASC`
+  ).all(playlistId) as PlaylistMemberRow[];
+}
+
+function dbGetPlaylistShareLinkByToken(db: Db, token: string): PlaylistShareLinkRow | undefined {
+  const tokenHash = hashShareToken(token);
+  return db.prepare("SELECT * FROM playlist_share_links WHERE token_hash = ?").get(tokenHash) as PlaylistShareLinkRow | undefined;
 }
 
 type ShareReactionCountRow = {
@@ -424,9 +714,11 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         .run(body.username, passwordHash, body.name, avatarUrl);
 
       const user = dbGetUserById(db, Number(info.lastInsertRowid));
-      req.session.userId = user!.id;
+      if (!user) throw httpError(500, "Failed to create user");
+      dbEnsureDefaultPlaylist(db, user.id);
+      req.session.userId = user.id;
 
-      res.status(201).json({ user: mapUser(user!) });
+      res.status(201).json({ user: mapUser(user) });
     } catch (e) {
       next(e);
     }
@@ -809,74 +1101,668 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
     }
   });
 
-  // ── Playlist ─────────────────────────────────────────────────────────────
+  // ── Playlists ──────────────────────────────────────────────────────────────
 
-  app.get("/api/playlist", requireAuth, (req, res) => {
-    const userId = req.session.userId!;
-    const rows = dbUserPlaylist(db, userId);
-    res.json({ songs: rows.map(mapPlaylist) });
-  });
-
-  app.post("/api/playlist", requireAuth, (req, res, next) => {
+  app.get("/api/playlists", requireAuth, (req, res, next) => {
     try {
-      const body = z
+      const query = z
         .object({
-          songMid: z.string().min(1),
-          songTitle: z.string().trim().max(200).optional().nullable(),
-          songSubtitle: z.string().trim().max(200).optional().nullable(),
-          singerName: z.string().trim().max(200).optional().nullable(),
-          albumMid: z.string().trim().max(50).optional().nullable(),
-          albumName: z.string().trim().max(200).optional().nullable(),
-          coverUrl: z.string().max(500).optional().nullable()
+          limit: z.coerce.number().int().positive().max(100).default(20),
+          offset: z.coerce.number().int().min(0).default(0),
         })
-        .parse(req.body);
+        .parse(req.query);
 
       const userId = req.session.userId!;
+      dbEnsureDefaultPlaylist(db, userId);
 
-      const info = db.prepare(
-        `INSERT OR IGNORE INTO playlist (user_id, song_mid, song_title, song_subtitle, singer_name, album_mid, album_name, cover_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        userId,
-        body.songMid,
-        body.songTitle ?? null,
-        body.songSubtitle ?? null,
-        body.singerName ?? null,
-        body.albumMid ?? null,
-        body.albumName ?? null,
-        body.coverUrl ?? null
-      );
+      const rows = dbListAccessiblePlaylists(db, userId, query.limit, query.offset);
+      const total = dbCountAccessiblePlaylists(db, userId);
+      const nextOffset = query.offset + rows.length < total ? query.offset + rows.length : null;
 
-      if (info.changes === 0) {
-        const existing = db.prepare(
-          "SELECT * FROM playlist WHERE user_id = ? AND song_mid = ?"
-        ).get(userId, body.songMid) as PlaylistRow | undefined;
-
-        res.status(200).json({ song: existing ? mapPlaylist(existing) : null });
-        return;
-      }
-
-      const created = db.prepare(
-        "SELECT * FROM playlist WHERE id = ?"
-      ).get(Number(info.lastInsertRowid)) as PlaylistRow | undefined;
-
-      res.status(201).json({ song: created ? mapPlaylist(created) : null });
+      res.json({
+        items: rows.map((row) => ({
+          ...mapPlaylist(row),
+          role: row.member_role,
+          status: row.member_status,
+          itemCount: row.item_count,
+        })),
+        total,
+        nextOffset,
+      });
     } catch (e) {
       next(e);
     }
   });
 
-  app.delete("/api/playlist/:songMid", requireAuth, (req, res) => {
-    const userId = req.session.userId!;
-    const songMid = req.params.songMid;
-    const info = db
-      .prepare("DELETE FROM playlist WHERE user_id = ? AND song_mid = ?")
-      .run(userId, songMid);
-    if (info.changes === 0) {
-      res.status(404).json({ error: { message: "Song not found in playlist" } });
-      return;
+  app.post("/api/playlists", requireAuth, (req, res, next) => {
+    try {
+      const body = z
+        .object({
+          name: z.string().trim().min(1).max(100),
+          description: z.string().trim().max(500).optional().nullable(),
+          visibility: z.enum(["private", "link_readonly", "link_collab"]).optional(),
+        })
+        .parse(req.body);
+
+      const userId = req.session.userId!;
+      const createPlaylist = db.transaction(() => {
+        const playlistId = randomUUID();
+        db.prepare(
+          `INSERT INTO playlists (id, owner_user_id, name, description, visibility, revision, is_default)
+           VALUES (?, ?, ?, ?, ?, 1, 0)`
+        ).run(
+          playlistId,
+          userId,
+          body.name,
+          body.description ?? null,
+          body.visibility ?? "private",
+        );
+
+        db.prepare(
+          `INSERT INTO playlist_members (playlist_id, user_id, role, status, invited_by_user_id)
+           VALUES (?, ?, 'owner', 'active', NULL)`
+        ).run(playlistId, userId);
+
+        const created = dbGetPlaylistById(db, playlistId);
+        if (!created) throw httpError(500, "Failed to create playlist");
+        return created;
+      });
+
+      const playlist = createPlaylist();
+      res.status(201).json({
+        playlist: {
+          ...mapPlaylist(playlist),
+          role: "owner" as PlaylistRole,
+          status: "active" as PlaylistMemberStatus,
+          itemCount: 0,
+        },
+      });
+    } catch (e) {
+      next(e);
     }
-    res.json({ ok: true });
+  });
+
+  app.get("/api/playlists/:playlistId", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const access = authorizePlaylistAccess(db, userId, playlistId, "viewer");
+      const members = dbPlaylistMembers(db, playlistId);
+      const itemCount = dbPlaylistItemsCount(db, playlistId);
+
+      res.json({
+        playlist: {
+          ...mapPlaylist(access),
+          role: access.member_role,
+          status: access.member_status,
+          itemCount,
+        },
+        members: members.map(mapPlaylistMember),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.patch("/api/playlists/:playlistId", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const body = z
+        .object({
+          name: z.string().trim().min(1).max(100).optional(),
+          description: z.string().trim().max(500).optional().nullable(),
+          visibility: z.enum(["private", "link_readonly", "link_collab"]).optional(),
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.body);
+
+      const access = authorizePlaylistAccess(db, userId, playlistId, "owner");
+
+      const updatePlaylist = db.transaction(() => {
+        db.prepare(
+          `UPDATE playlists
+           SET name = ?,
+               description = ?,
+               visibility = ?
+           WHERE id = ?
+             AND archived_at IS NULL`
+        ).run(
+          body.name ?? access.name,
+          body.description === undefined ? access.description : body.description,
+          body.visibility ?? access.visibility,
+          playlistId,
+        );
+
+        const revision = bumpPlaylistRevision(db, playlistId, body.expectedRevision);
+        const updated = dbGetPlaylistById(db, playlistId);
+        if (!updated) throw httpError(404, "Playlist not found");
+        return { updated, revision };
+      });
+
+      const { updated, revision } = updatePlaylist();
+      res.json({
+        playlist: {
+          ...mapPlaylist(updated),
+          role: access.member_role,
+          status: access.member_status,
+          revision,
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.delete("/api/playlists/:playlistId", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const query = z
+        .object({
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.query);
+
+      const access = authorizePlaylistAccess(db, userId, playlistId, "owner");
+      if (access.is_default === 1) {
+        throw httpError(400, "Default playlist cannot be archived");
+      }
+
+      const archivePlaylist = db.transaction(() => {
+        const result = db.prepare(
+          `UPDATE playlists
+           SET archived_at = datetime('now'),
+               updated_at = datetime('now'),
+               revision = revision + 1
+           WHERE id = ?
+             AND revision = ?
+             AND archived_at IS NULL`
+        ).run(playlistId, query.expectedRevision);
+
+        if (result.changes === 0) {
+          throw httpError(409, "Playlist revision conflict");
+        }
+
+        db.prepare(
+          `UPDATE playlist_share_links
+           SET revoked_at = COALESCE(revoked_at, datetime('now'))
+           WHERE playlist_id = ?`
+        ).run(playlistId);
+      });
+
+      archivePlaylist();
+      res.json({ ok: true });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.get("/api/playlists/:playlistId/items", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const query = z
+        .object({
+          limit: z.coerce.number().int().positive().max(200).default(100),
+          offset: z.coerce.number().int().min(0).default(0),
+        })
+        .parse(req.query);
+
+      const access = authorizePlaylistAccess(db, userId, playlistId, "viewer");
+      const rows = dbPlaylistItems(db, playlistId, query.limit, query.offset);
+      const total = dbPlaylistItemsCount(db, playlistId);
+      const nextOffset = query.offset + rows.length < total ? query.offset + rows.length : null;
+
+      res.json({
+        items: rows.map(mapPlaylistItem),
+        total,
+        nextOffset,
+        revision: access.revision,
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post("/api/playlists/:playlistId/items", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const body = z
+        .object({
+          songMid: z.string().trim().min(1).max(100),
+          songTitle: z.string().trim().max(200).optional().nullable(),
+          songSubtitle: z.string().trim().max(200).optional().nullable(),
+          singerName: z.string().trim().max(200).optional().nullable(),
+          albumMid: z.string().trim().max(50).optional().nullable(),
+          albumName: z.string().trim().max(200).optional().nullable(),
+          coverUrl: z.string().max(500).optional().nullable(),
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.body);
+
+      authorizePlaylistAccess(db, userId, playlistId, "editor");
+
+      const addItem = db.transaction(() => {
+        const nextPositionRow = db.prepare(
+          "SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM playlist_items WHERE playlist_id = ?"
+        ).get(playlistId) as { next_position: number };
+
+        const insertResult = db.prepare(
+          `INSERT INTO playlist_items (
+             playlist_id,
+             song_mid,
+             song_title,
+             song_subtitle,
+             singer_name,
+             album_mid,
+             album_name,
+             cover_url,
+             position,
+             added_by_user_id
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          playlistId,
+          body.songMid,
+          body.songTitle ?? null,
+          body.songSubtitle ?? null,
+          body.singerName ?? null,
+          body.albumMid ?? null,
+          body.albumName ?? null,
+          body.coverUrl ?? null,
+          nextPositionRow.next_position,
+          userId,
+        );
+
+        const revision = bumpPlaylistRevision(db, playlistId, body.expectedRevision);
+        const created = db.prepare("SELECT * FROM playlist_items WHERE id = ?").get(Number(insertResult.lastInsertRowid)) as PlaylistItemRow | undefined;
+        if (!created) throw httpError(500, "Failed to create playlist item");
+        return { created, revision };
+      });
+
+      const { created, revision } = addItem();
+      res.status(201).json({ item: mapPlaylistItem(created), revision });
+    } catch (e) {
+      if (isUniqueConstraintError(e, "playlist_items.playlist_id, playlist_items.song_mid")) {
+        next(httpError(409, "Song already exists in playlist"));
+        return;
+      }
+      next(e);
+    }
+  });
+
+  app.delete("/api/playlists/:playlistId/items/:songMid", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const songMid = z.string().trim().min(1).max(100).parse(req.params.songMid);
+      const query = z
+        .object({
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.query);
+
+      authorizePlaylistAccess(db, userId, playlistId, "editor");
+
+      const removeItem = db.transaction(() => {
+        const existing = db.prepare(
+          "SELECT id, position FROM playlist_items WHERE playlist_id = ? AND song_mid = ?"
+        ).get(playlistId, songMid) as { id: number; position: number } | undefined;
+
+        if (!existing) throw httpError(404, "Playlist item not found");
+
+        db.prepare("DELETE FROM playlist_items WHERE id = ?").run(existing.id);
+        db.prepare(
+          `UPDATE playlist_items
+           SET position = position - 1
+           WHERE playlist_id = ?
+             AND position > ?`
+        ).run(playlistId, existing.position);
+
+        const revision = bumpPlaylistRevision(db, playlistId, query.expectedRevision);
+        return revision;
+      });
+
+      const revision = removeItem();
+      res.json({ ok: true, revision });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.patch("/api/playlists/:playlistId/items/reorder", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const body = z
+        .object({
+          songMids: z.array(z.string().trim().min(1).max(100)).min(1),
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.body);
+
+      authorizePlaylistAccess(db, userId, playlistId, "editor");
+
+      const reorderItems = db.transaction(() => {
+        const currentRows = db.prepare(
+          "SELECT song_mid, position FROM playlist_items WHERE playlist_id = ? ORDER BY position ASC"
+        ).all(playlistId) as Array<{ song_mid: string; position: number }>;
+
+        if (currentRows.length !== body.songMids.length) {
+          throw httpError(400, "Reorder payload does not match playlist items");
+        }
+
+        const existingSet = new Set(currentRows.map((row) => row.song_mid));
+        const requestedSet = new Set(body.songMids);
+        if (requestedSet.size !== body.songMids.length) {
+          throw httpError(400, "Reorder payload contains duplicate songs");
+        }
+
+        for (const songMid of requestedSet) {
+          if (!existingSet.has(songMid)) {
+            throw httpError(400, "Reorder payload contains unknown song");
+          }
+        }
+
+        db.prepare(
+          "UPDATE playlist_items SET position = position + 1000000 WHERE playlist_id = ?"
+        ).run(playlistId);
+
+        const updatePosition = db.prepare(
+          "UPDATE playlist_items SET position = ? WHERE playlist_id = ? AND song_mid = ?"
+        );
+        body.songMids.forEach((songMid, index) => {
+          updatePosition.run(index, playlistId, songMid);
+        });
+
+        const revision = bumpPlaylistRevision(db, playlistId, body.expectedRevision);
+        return revision;
+      });
+
+      const revision = reorderItems();
+      const items = dbPlaylistItems(db, playlistId, 5000, 0);
+      res.json({ items: items.map(mapPlaylistItem), revision });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post("/api/playlists/:playlistId/share-links", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const body = z
+        .object({
+          scope: z.enum(["read", "edit"]).default("read"),
+          expiresInHours: z.coerce.number().int().min(1).max(24 * 30).default(72),
+          maxUses: z.coerce.number().int().min(1).max(100000).optional().nullable(),
+        })
+        .parse(req.body);
+
+      authorizePlaylistAccess(db, userId, playlistId, "owner");
+
+      const createLink = db.transaction(() => {
+        const token = createShareToken();
+        const tokenHash = hashShareToken(token);
+        const expiresAt = new Date(Date.now() + body.expiresInHours * 60 * 60 * 1000).toISOString();
+
+        const result = db.prepare(
+          `INSERT INTO playlist_share_links (playlist_id, token_hash, scope, expires_at, max_uses, created_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(
+          playlistId,
+          tokenHash,
+          body.scope,
+          expiresAt,
+          body.maxUses ?? null,
+          userId,
+        );
+
+        const link = db.prepare("SELECT * FROM playlist_share_links WHERE id = ?").get(Number(result.lastInsertRowid)) as PlaylistShareLinkRow | undefined;
+        if (!link) throw httpError(500, "Failed to create share link");
+        return { link, token };
+      });
+
+      const { link, token } = createLink();
+      res.status(201).json({
+        link: mapPlaylistShareLink(link),
+        token,
+        sharePath: `/playlist/share/${encodeURIComponent(token)}`,
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.get("/api/playlists/share/:token", requireAuth, (req, res, next) => {
+    try {
+      const token = z.string().trim().min(16).max(200).parse(req.params.token);
+      const link = dbGetPlaylistShareLinkByToken(db, token);
+      if (!link) throw httpError(404, "Share link not found");
+      assertShareLinkUsable(link, Date.now());
+
+      const playlist = dbGetPlaylistById(db, link.playlist_id);
+      if (!playlist) throw httpError(404, "Playlist not found");
+
+      const userId = req.session.userId!;
+      const membership = db.prepare(
+        "SELECT * FROM playlist_members WHERE playlist_id = ? AND user_id = ?"
+      ).get(link.playlist_id, userId) as PlaylistMemberRow | undefined;
+
+      const canRead = Boolean(
+        membership &&
+        membership.status === "active" &&
+        isPlaylistRoleAllowed(membership.role, "viewer")
+      );
+      const canEdit = Boolean(
+        membership &&
+        membership.status === "active" &&
+        isPlaylistRoleAllowed(membership.role, "editor")
+      );
+
+      res.json({
+        link: mapPlaylistShareLink(link),
+        playlist: mapPlaylist(playlist),
+        membership: membership ? mapPlaylistMember(membership) : null,
+        canRead,
+        canEdit,
+        requiresJoin: !canRead,
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post("/api/playlists/share/:token/join", requireAuth, (req, res, next) => {
+    try {
+      const token = z.string().trim().min(16).max(200).parse(req.params.token);
+      const userId = req.session.userId!;
+
+      const joinByLink = db.transaction(() => {
+        const link = dbGetPlaylistShareLinkByToken(db, token);
+        if (!link) throw httpError(404, "Share link not found");
+        assertShareLinkUsable(link, Date.now());
+
+        const playlist = dbGetPlaylistById(db, link.playlist_id);
+        if (!playlist) throw httpError(404, "Playlist not found");
+
+        const existing = db.prepare(
+          "SELECT * FROM playlist_members WHERE playlist_id = ? AND user_id = ?"
+        ).get(link.playlist_id, userId) as PlaylistMemberRow | undefined;
+
+        let nextRole: PlaylistRole = "viewer";
+        let nextStatus: PlaylistMemberStatus = "active";
+
+        if (existing?.role === "owner") {
+          nextRole = "owner";
+          nextStatus = "active";
+        } else if (link.scope === "edit") {
+          nextRole = "editor";
+          nextStatus = existing?.role === "editor" && existing.status === "active"
+            ? "active"
+            : "pending";
+        } else if (existing?.role === "editor") {
+          nextRole = "editor";
+          nextStatus = "active";
+        }
+
+        if (existing) {
+          db.prepare(
+            `UPDATE playlist_members
+             SET role = ?,
+                 status = ?,
+                 invited_by_user_id = COALESCE(invited_by_user_id, ?),
+                 joined_at = CASE WHEN ? = 'active' THEN datetime('now') ELSE joined_at END
+             WHERE id = ?`
+          ).run(nextRole, nextStatus, link.created_by_user_id, nextStatus, existing.id);
+        } else {
+          db.prepare(
+            `INSERT INTO playlist_members (playlist_id, user_id, role, status, invited_by_user_id)
+             VALUES (?, ?, ?, ?, ?)`
+          ).run(link.playlist_id, userId, nextRole, nextStatus, link.created_by_user_id);
+        }
+
+        db.prepare(
+          `UPDATE playlist_share_links
+           SET used_count = used_count + 1,
+               last_used_at = datetime('now')
+           WHERE id = ?`
+        ).run(link.id);
+
+        db.prepare(
+          `UPDATE playlists
+           SET revision = revision + 1,
+               updated_at = datetime('now')
+           WHERE id = ?
+             AND archived_at IS NULL`
+        ).run(link.playlist_id);
+
+        const membership = db.prepare(
+          "SELECT * FROM playlist_members WHERE playlist_id = ? AND user_id = ?"
+        ).get(link.playlist_id, userId) as PlaylistMemberRow | undefined;
+        if (!membership) throw httpError(500, "Failed to join playlist");
+
+        const updatedPlaylist = dbGetPlaylistById(db, link.playlist_id);
+        if (!updatedPlaylist) throw httpError(404, "Playlist not found");
+
+        const refreshedLink = db.prepare("SELECT * FROM playlist_share_links WHERE id = ?").get(link.id) as PlaylistShareLinkRow | undefined;
+        if (!refreshedLink) throw httpError(404, "Share link not found");
+
+        return { membership, updatedPlaylist, refreshedLink };
+      });
+
+      const { membership, updatedPlaylist, refreshedLink } = joinByLink();
+      res.json({
+        playlist: mapPlaylist(updatedPlaylist),
+        membership: mapPlaylistMember(membership),
+        link: mapPlaylistShareLink(refreshedLink),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.delete("/api/playlists/share-links/:linkId", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const linkId = parseIntParam(req.params.linkId);
+      const link = db.prepare("SELECT * FROM playlist_share_links WHERE id = ?").get(linkId) as PlaylistShareLinkRow | undefined;
+      if (!link) throw httpError(404, "Share link not found");
+
+      authorizePlaylistAccess(db, userId, link.playlist_id, "owner");
+
+      db.prepare(
+        `UPDATE playlist_share_links
+         SET revoked_at = COALESCE(revoked_at, datetime('now'))
+         WHERE id = ?`
+      ).run(linkId);
+
+      res.json({ ok: true });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.patch("/api/playlists/:playlistId/members/:userId", requireAuth, (req, res, next) => {
+    try {
+      const ownerUserId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const targetUserId = parseIntParam(req.params.userId);
+      const body = z
+        .object({
+          role: z.enum(["editor", "viewer"]),
+          status: z.enum(["active", "pending"]).default("active"),
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.body);
+
+      const access = authorizePlaylistAccess(db, ownerUserId, playlistId, "owner");
+      if (targetUserId === access.owner_user_id) {
+        throw httpError(400, "Owner role cannot be changed");
+      }
+
+      const updateMember = db.transaction(() => {
+        const existing = db.prepare(
+          "SELECT * FROM playlist_members WHERE playlist_id = ? AND user_id = ?"
+        ).get(playlistId, targetUserId) as PlaylistMemberRow | undefined;
+        if (!existing) throw httpError(404, "Member not found");
+        if (existing.role === "owner") throw httpError(400, "Owner role cannot be changed");
+
+        db.prepare(
+          `UPDATE playlist_members
+           SET role = ?,
+               status = ?
+           WHERE id = ?`
+        ).run(body.role, body.status, existing.id);
+
+        const revision = bumpPlaylistRevision(db, playlistId, body.expectedRevision);
+        const updated = db.prepare("SELECT * FROM playlist_members WHERE id = ?").get(existing.id) as PlaylistMemberRow | undefined;
+        if (!updated) throw httpError(404, "Member not found");
+        return { updated, revision };
+      });
+
+      const { updated, revision } = updateMember();
+      res.json({ member: mapPlaylistMember(updated), revision });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.delete("/api/playlists/:playlistId/members/:userId", requireAuth, (req, res, next) => {
+    try {
+      const ownerUserId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const targetUserId = parseIntParam(req.params.userId);
+      const query = z
+        .object({
+          expectedRevision: z.coerce.number().int().min(1),
+        })
+        .parse(req.query);
+
+      const access = authorizePlaylistAccess(db, ownerUserId, playlistId, "owner");
+      if (targetUserId === access.owner_user_id) {
+        throw httpError(400, "Owner cannot be removed");
+      }
+
+      const removeMember = db.transaction(() => {
+        const existing = db.prepare(
+          "SELECT * FROM playlist_members WHERE playlist_id = ? AND user_id = ?"
+        ).get(playlistId, targetUserId) as PlaylistMemberRow | undefined;
+        if (!existing) throw httpError(404, "Member not found");
+        if (existing.role === "owner") throw httpError(400, "Owner cannot be removed");
+
+        db.prepare("DELETE FROM playlist_members WHERE id = ?").run(existing.id);
+        const revision = bumpPlaylistRevision(db, playlistId, query.expectedRevision);
+        return revision;
+      });
+
+      const revision = removeMember();
+      res.json({ ok: true, revision });
+    } catch (e) {
+      next(e);
+    }
   });
 
   // ── Daily recommend ───────────────────────────────────────────────────────
@@ -1048,11 +1934,18 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         return;
       }
 
-      const userPlaylist = dbUserPlaylist(db, userId);
+      const userPlaylistItems = db.prepare(
+        `SELECT pi.song_mid, pi.singer_name
+         FROM playlist_items pi
+         JOIN playlists p
+           ON p.id = pi.playlist_id
+         WHERE p.owner_user_id = ?
+           AND p.archived_at IS NULL`
+      ).all(userId) as Array<{ song_mid: string; singer_name: string | null }>;
       const userShares = dbUserShares(db, userId);
       const ownedMids = new Set<string>([
-        ...userPlaylist.map((song) => song.song_mid),
-        ...userShares.map((song) => song.song_mid)
+        ...userPlaylistItems.map((song) => song.song_mid),
+        ...userShares.map((song) => song.song_mid),
       ]);
 
       const singerCounts = new Map<string, number>();
@@ -1061,7 +1954,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
           singerCounts.set(singer, (singerCounts.get(singer) ?? 0) + weight);
         }
       };
-      userPlaylist.forEach((song) => countSinger(song.singer_name, 1));
+      userPlaylistItems.forEach((song) => countSinger(song.singer_name, 1));
       userShares.forEach((song) => countSinger(song.singer_name, 2));
 
       const shuffledTopIds = seededShuffle([...new Set(allTopIds)], seed);

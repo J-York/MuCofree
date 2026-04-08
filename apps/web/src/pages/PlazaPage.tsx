@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  apiAddToPlaylist,
+  apiAddSongToDefaultPlaylist,
   apiDeleteShare,
   apiDeleteShareReaction,
-  apiGetPlaylist,
+  apiGetDefaultPlaylist,
+  apiGetPlaylistItems,
   apiSetShareReaction,
   apiSharesFeed,
   apiUsersList,
   type FeedShare,
-  type UserWithPreview
+  type UserWithPreview,
 } from "../api";
 import Avatar from "../components/Avatar";
 import ShareReactionBar from "../components/ShareReactionBar";
@@ -108,8 +109,14 @@ export default function PlazaPage() {
   async function loadPlaylistMids() {
     setPlaylistLoading(true);
     try {
-      const data = await apiGetPlaylist();
-      setPlaylistMids(new Set(data.songs.map((s) => s.songMid)));
+      const defaultPlaylist = await apiGetDefaultPlaylist();
+      if (!defaultPlaylist) {
+        setPlaylistMids(new Set());
+        return;
+      }
+
+      const data = await apiGetPlaylistItems(defaultPlaylist.id, 0, 500);
+      setPlaylistMids(new Set(data.items.map((item) => item.songMid)));
     } catch {
       setPlaylistMids(new Set());
     } finally {
@@ -122,23 +129,26 @@ export default function PlazaPage() {
 
     setAddingMids((prev) => new Set([...prev, sh.songMid]));
     try {
-      await apiAddToPlaylist({
+      const result = await apiAddSongToDefaultPlaylist({
         songMid: sh.songMid,
         songTitle: sh.songTitle,
         songSubtitle: sh.songSubtitle,
         singerName: sh.singerName,
         albumMid: sh.albumMid,
         albumName: sh.albumName,
-        coverUrl: sh.coverUrl
+        coverUrl: sh.coverUrl,
       });
-      appendToPlaylistQueue({
-        mid: sh.songMid,
-        title: sh.songTitle ?? sh.songMid,
-        singer: sh.singerName ?? undefined,
-        coverUrl: sh.coverUrl ?? undefined
-      });
+      appendToPlaylistQueue(
+        {
+          mid: sh.songMid,
+          title: sh.songTitle ?? sh.songMid,
+          singer: sh.singerName ?? undefined,
+          coverUrl: sh.coverUrl ?? undefined,
+        },
+        result.playlistId,
+      );
       setPlaylistMids((prev) => new Set([...prev, sh.songMid]));
-      showToast(`已添加《${sh.songTitle ?? sh.songMid}》到我的歌单`);
+      showToast(`已添加《${sh.songTitle ?? sh.songMid}》到我的收藏`);
     } catch (e) {
       showToast((e as Error).message);
     } finally {

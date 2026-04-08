@@ -1,17 +1,17 @@
 import { useState } from "react";
 import { safeUrl } from "../utils";
-import type { PlaylistSong, QqSong, Share } from "../api";
+import type { PlaylistItem, QqSong, Share } from "../api";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
 
 // ── Unified song shape accepted by this component ────────────────────────────
-export type SongItem = QqSong | Share | PlaylistSong;
+export type SongItem = QqSong | Share | PlaylistItem;
 
 function toPlayerSong(item: SongItem): PlayerSong {
   if ("mid" in item) {
     // QqSong
     return { mid: item.mid, title: item.title, singer: item.singer, coverUrl: item.coverUrl };
   }
-  // Share or PlaylistSong
+  // Share or PlaylistItem
   return {
     mid: item.songMid,
     title: item.songTitle ?? item.songMid,

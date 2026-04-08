@@ -62,9 +62,30 @@ export type Share = BaseShare & {
   viewerReactionKey: ReactionKey | null;
 };
 
-export type PlaylistSong = {
+export type PlaylistVisibility = "private" | "link_readonly" | "link_collab";
+export type PlaylistRole = "owner" | "editor" | "viewer";
+export type PlaylistMemberStatus = "active" | "pending";
+export type PlaylistShareScope = "read" | "edit";
+
+export type PlaylistSummary = {
+  id: string;
+  ownerUserId: number;
+  name: string;
+  description: string | null;
+  visibility: PlaylistVisibility;
+  revision: number;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  role: PlaylistRole;
+  status: PlaylistMemberStatus;
+  itemCount: number;
+};
+
+export type PlaylistItem = {
   id: number;
-  userId: number;
+  playlistId: string;
   songMid: string;
   songTitle: string | null;
   songSubtitle: string | null;
@@ -72,8 +93,60 @@ export type PlaylistSong = {
   albumMid: string | null;
   albumName: string | null;
   coverUrl: string | null;
+  position: number;
+  addedByUserId: number;
   addedAt: string;
 };
+
+export type PlaylistMember = {
+  userId: number;
+  role: PlaylistRole;
+  status: PlaylistMemberStatus;
+  invitedByUserId: number | null;
+  joinedAt: string;
+  createdAt: string;
+};
+
+export type PlaylistShareLink = {
+  id: number;
+  playlistId: string;
+  scope: PlaylistShareScope;
+  expiresAt: string;
+  maxUses: number | null;
+  usedCount: number;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdByUserId: number;
+  createdAt: string;
+};
+
+export type PlaylistListResponse = {
+  items: PlaylistSummary[];
+  total: number;
+  nextOffset: number | null;
+};
+
+export type PlaylistDetailResponse = {
+  playlist: PlaylistSummary;
+  members: PlaylistMember[];
+};
+
+export type PlaylistItemsResponse = {
+  items: PlaylistItem[];
+  total: number;
+  nextOffset: number | null;
+  revision: number;
+};
+
+export type PlaylistShareResolveResponse = {
+  link: PlaylistShareLink;
+  playlist: Omit<PlaylistSummary, "role" | "status" | "itemCount">;
+  membership: PlaylistMember | null;
+  canRead: boolean;
+  canEdit: boolean;
+  requiresJoin: boolean;
+};
+
 
 export type HomeResponse = { users: User[] };
 
@@ -233,14 +306,9 @@ export async function apiDeleteShareReaction(shareId: number): Promise<{ ok: boo
   return readJson<{ ok: boolean }>(res);
 }
 
-// ── Playlist ──────────────────────────────────────────────────────────────────
+// ── Playlists ────────────────────────────────────────────────────────────────
 
-export async function apiGetPlaylist(): Promise<{ songs: PlaylistSong[] }> {
-  const res = await fetch("/api/playlist", { method: "GET", credentials: "include" });
-  return readJson<{ songs: PlaylistSong[] }>(res);
-}
-
-export async function apiAddToPlaylist(input: {
+type PlaylistSongInput = {
   songMid: string;
   songTitle?: string | null;
   songSubtitle?: string | null;
@@ -248,22 +316,228 @@ export async function apiAddToPlaylist(input: {
   albumMid?: string | null;
   albumName?: string | null;
   coverUrl?: string | null;
-}): Promise<{ song: PlaylistSong }> {
-  const res = await fetch("/api/playlist", {
+};
+
+export async function apiListPlaylists(offset = 0, limit = 20): Promise<PlaylistListResponse> {
+  const sp = new URLSearchParams();
+  sp.set("offset", String(offset));
+  sp.set("limit", String(limit));
+  const res = await fetch(`/api/playlists?${sp.toString()}`, { method: "GET", credentials: "include" });
+  return readJson<PlaylistListResponse>(res);
+}
+
+export async function apiCreatePlaylist(input: {
+  name: string;
+  description?: string | null;
+  visibility?: PlaylistVisibility;
+}): Promise<{ playlist: PlaylistSummary }> {
+  const res = await fetch("/api/playlists", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include"
+    credentials: "include",
   });
-  return readJson<{ song: PlaylistSong }>(res);
+  return readJson<{ playlist: PlaylistSummary }>(res);
 }
 
-export async function apiRemoveFromPlaylist(songMid: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/playlist/${encodeURIComponent(songMid)}`, {
+export async function apiGetPlaylistDetail(playlistId: string): Promise<PlaylistDetailResponse> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, {
+    method: "GET",
+    credentials: "include",
+  });
+  return readJson<PlaylistDetailResponse>(res);
+}
+
+export async function apiUpdatePlaylist(
+  playlistId: string,
+  input: {
+    expectedRevision: number;
+    name?: string;
+    description?: string | null;
+    visibility?: PlaylistVisibility;
+  },
+): Promise<{ playlist: PlaylistSummary }> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  return readJson<{ playlist: PlaylistSummary }>(res);
+}
+
+export async function apiArchivePlaylist(playlistId: string, expectedRevision: number): Promise<{ ok: boolean }> {
+  const sp = new URLSearchParams();
+  sp.set("expectedRevision", String(expectedRevision));
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}?${sp.toString()}`, {
     method: "DELETE",
-    credentials: "include"
+    credentials: "include",
   });
   return readJson<{ ok: boolean }>(res);
+}
+
+export async function apiGetPlaylistItems(
+  playlistId: string,
+  offset = 0,
+  limit = 200,
+): Promise<PlaylistItemsResponse> {
+  const sp = new URLSearchParams();
+  sp.set("offset", String(offset));
+  sp.set("limit", String(limit));
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items?${sp.toString()}`, {
+    method: "GET",
+    credentials: "include",
+  });
+  return readJson<PlaylistItemsResponse>(res);
+}
+
+export async function apiAddPlaylistItem(
+  playlistId: string,
+  input: PlaylistSongInput & { expectedRevision: number },
+): Promise<{ item: PlaylistItem; revision: number }> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  return readJson<{ item: PlaylistItem; revision: number }>(res);
+}
+
+export async function apiRemovePlaylistItem(
+  playlistId: string,
+  songMid: string,
+  expectedRevision: number,
+): Promise<{ ok: boolean; revision: number }> {
+  const sp = new URLSearchParams();
+  sp.set("expectedRevision", String(expectedRevision));
+  const res = await fetch(
+    `/api/playlists/${encodeURIComponent(playlistId)}/items/${encodeURIComponent(songMid)}?${sp.toString()}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  return readJson<{ ok: boolean; revision: number }>(res);
+}
+
+export async function apiReorderPlaylistItems(
+  playlistId: string,
+  songMids: string[],
+  expectedRevision: number,
+): Promise<{ items: PlaylistItem[]; revision: number }> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items/reorder`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ songMids, expectedRevision }),
+    credentials: "include",
+  });
+  return readJson<{ items: PlaylistItem[]; revision: number }>(res);
+}
+
+export async function apiCreatePlaylistShareLink(
+  playlistId: string,
+  input: { scope?: PlaylistShareScope; expiresInHours?: number; maxUses?: number | null },
+): Promise<{ link: PlaylistShareLink; token: string; sharePath: string }> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/share-links`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  return readJson<{ link: PlaylistShareLink; token: string; sharePath: string }>(res);
+}
+
+export async function apiResolvePlaylistShareToken(token: string): Promise<PlaylistShareResolveResponse> {
+  const res = await fetch(`/api/playlists/share/${encodeURIComponent(token)}`, {
+    method: "GET",
+    credentials: "include",
+  });
+  return readJson<PlaylistShareResolveResponse>(res);
+}
+
+export async function apiJoinPlaylistShareToken(token: string): Promise<{
+  playlist: Omit<PlaylistSummary, "role" | "status" | "itemCount">;
+  membership: PlaylistMember;
+  link: PlaylistShareLink;
+}> {
+  const res = await fetch(`/api/playlists/share/${encodeURIComponent(token)}/join`, {
+    method: "POST",
+    credentials: "include",
+  });
+  return readJson<{
+    playlist: Omit<PlaylistSummary, "role" | "status" | "itemCount">;
+    membership: PlaylistMember;
+    link: PlaylistShareLink;
+  }>(res);
+}
+
+export async function apiRevokePlaylistShareLink(linkId: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/playlists/share-links/${linkId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  return readJson<{ ok: boolean }>(res);
+}
+
+export async function apiUpdatePlaylistMember(
+  playlistId: string,
+  userId: number,
+  input: { role: "editor" | "viewer"; status?: PlaylistMemberStatus; expectedRevision: number },
+): Promise<{ member: PlaylistMember; revision: number }> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/members/${userId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  return readJson<{ member: PlaylistMember; revision: number }>(res);
+}
+
+export async function apiRemovePlaylistMember(
+  playlistId: string,
+  userId: number,
+  expectedRevision: number,
+): Promise<{ ok: boolean; revision: number }> {
+  const sp = new URLSearchParams();
+  sp.set("expectedRevision", String(expectedRevision));
+  const res = await fetch(
+    `/api/playlists/${encodeURIComponent(playlistId)}/members/${userId}?${sp.toString()}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  return readJson<{ ok: boolean; revision: number }>(res);
+}
+
+export async function apiGetDefaultPlaylist(): Promise<PlaylistSummary | null> {
+  const data = await apiListPlaylists(0, 100);
+  return data.items.find((playlist) => playlist.isDefault) ?? null;
+}
+
+export async function apiAddSongToDefaultPlaylist(
+  input: PlaylistSongInput,
+): Promise<{ playlistId: string; item: PlaylistItem; revision: number }> {
+  const defaultPlaylist = await apiGetDefaultPlaylist();
+  if (!defaultPlaylist) {
+    throw new Error("Default playlist not found");
+  }
+
+  try {
+    const firstAttempt = await apiAddPlaylistItem(defaultPlaylist.id, {
+      ...input,
+      expectedRevision: defaultPlaylist.revision,
+    });
+
+    return { playlistId: defaultPlaylist.id, ...firstAttempt };
+  } catch (error) {
+    if ((error as Error).message !== "Playlist revision conflict") {
+      throw error;
+    }
+
+    const latest = await apiGetPlaylistDetail(defaultPlaylist.id);
+    const retry = await apiAddPlaylistItem(defaultPlaylist.id, {
+      ...input,
+      expectedRevision: latest.playlist.revision,
+    });
+
+    return { playlistId: defaultPlaylist.id, ...retry };
+  }
 }
 
 // ── Daily Recommendation ──────────────────────────────────────────────────────
