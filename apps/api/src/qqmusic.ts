@@ -4,6 +4,22 @@ export type QqMusicClient = {
   baseUrl: string;
 };
 
+export type QqPlaylistImportSong = {
+  songMid: string;
+  songTitle: string;
+  songSubtitle: string | null;
+  singerName: string | null;
+  albumMid: string | null;
+  albumName: string | null;
+  coverUrl: string | null;
+};
+
+export type QqPlaylistImportPayload = {
+  id: number;
+  title: string | null;
+  songs: QqPlaylistImportSong[];
+};
+
 const apiResponseSchema = z.object({
   code: z.number(),
   data: z.unknown().optional()
@@ -133,4 +149,182 @@ export function assertApiOk(payload: unknown): { code: number; data?: unknown } 
     throw new Error("Upstream response shape invalid");
   }
   return parsed.data;
+}
+
+function pickString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function pickInteger(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function pickPositiveInteger(value: unknown): number | undefined {
+  const parsed = pickInteger(value);
+  return typeof parsed === "number" && parsed > 0 ? parsed : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function coverProxyUrl(albumMid: string | null): string | null {
+  return albumMid ? `/api/qq/cover-proxy?album_mid=${encodeURIComponent(albumMid)}` : null;
+}
+
+function pickSongMid(item: Record<string, unknown>): string | undefined {
+  return pickString(item.mid) || pickString(item.songmid) || pickString(item.song_mid);
+}
+
+function pickSongTitle(item: Record<string, unknown>): string | undefined {
+  return (
+    pickString(item.title) ||
+    pickString(item.name) ||
+    pickString(item.songname) ||
+    pickString(item.song_title)
+  );
+}
+
+function pickSongSubtitle(item: Record<string, unknown>): string | null {
+  return (
+    pickString(item.subtitle) ||
+    pickString(item.subtitle_name) ||
+    pickString(item.subTitle) ||
+    pickString(item.song_subtitle) ||
+    null
+  );
+}
+
+function pickSingerName(item: Record<string, unknown>): string | null {
+  const direct = pickString(item.singerName) || pickString(item.singer_name);
+  if (direct) return direct;
+
+  const singers = Array.isArray(item.singer)
+    ? item.singer
+    : Array.isArray(item.singers)
+      ? item.singers
+      : [];
+  const names = singers
+    .map((entry) => {
+      const singer = asRecord(entry);
+      return pickString(singer.name) || pickString(singer.title);
+    })
+    .filter((name): name is string => Boolean(name));
+
+  return names.length ? names.join(", ") : null;
+}
+
+function pickAlbumInfo(item: Record<string, unknown>) {
+  const album = asRecord(item.album);
+  const albumMid = (
+    pickString(album.mid) ||
+    pickString(item.album_mid) ||
+    pickString(item.albummid) ||
+    null
+  );
+  const albumName = (
+    pickString(album.name) ||
+    pickString(album.title) ||
+    pickString(item.album_name) ||
+    pickString(item.albumname) ||
+    null
+  );
+  return { albumMid, albumName };
+}
+
+export function parseQqPlaylistSource(source: string): number | null {
+  const trimmed = source.trim();
+  if (!trimmed) return null;
+
+  if (/^\d+$/.test(trimmed)) {
+    return pickPositiveInteger(trimmed) ?? null;
+  }
+
+  const commonMatch = trimmed.match(/(?:playlist\/|[?&]id=)(\d{5,})/i);
+  if (commonMatch) {
+    return pickPositiveInteger(commonMatch[1]) ?? null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+
+    for (const key of ["id", "disstid", "dirid"]) {
+      const value = parsed.searchParams.get(key);
+      const id = pickPositiveInteger(value);
+      if (id) return id;
+    }
+
+    const pathnameMatch = parsed.pathname.match(/\/playlist\/(\d{5,})(?:\/)?$/i);
+    if (pathnameMatch) {
+      return pickPositiveInteger(pathnameMatch[1]) ?? null;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+export function normalizeQqPlaylistPayload(payload: unknown): QqPlaylistImportPayload {
+  const root = asRecord(payload);
+  const rootCode = pickInteger(root.code);
+  if (rootCode !== undefined && rootCode !== 0) {
+    throw new Error("QQ playlist unavailable");
+  }
+
+  const data = asRecord(root.data);
+  const dataCode = pickInteger(data.code);
+  if (dataCode !== undefined && dataCode !== 0) {
+    throw new Error("QQ playlist unavailable");
+  }
+
+  const dirinfo = asRecord(data.dirinfo);
+  const playlistId = pickPositiveInteger(dirinfo.id);
+  if (!playlistId) {
+    throw new Error("QQ playlist payload invalid");
+  }
+
+  const rawSongs = Array.isArray(data.songlist)
+    ? data.songlist
+    : Array.isArray(data.list)
+      ? data.list
+      : [];
+
+  const seenSongMids = new Set<string>();
+  const songs: QqPlaylistImportSong[] = [];
+
+  for (const rawItem of rawSongs) {
+    const item = asRecord(rawItem);
+    const songMid = pickSongMid(item);
+    const songTitle = pickSongTitle(item);
+    if (!songMid || !songTitle || seenSongMids.has(songMid)) {
+      continue;
+    }
+
+    seenSongMids.add(songMid);
+
+    const { albumMid, albumName } = pickAlbumInfo(item);
+    songs.push({
+      songMid,
+      songTitle,
+      songSubtitle: pickSongSubtitle(item),
+      singerName: pickSingerName(item),
+      albumMid,
+      albumName,
+      coverUrl: coverProxyUrl(albumMid),
+    });
+  }
+
+  return {
+    id: playlistId,
+    title: pickString(dirinfo.title) || pickString(data.title) || null,
+    songs,
+  };
 }

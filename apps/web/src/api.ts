@@ -138,6 +138,18 @@ export type PlaylistItemsResponse = {
   revision: number;
 };
 
+export type PlaylistImportQqResponse = {
+  importedCount: number;
+  skippedCount: number;
+  revision: number;
+  sourcePlaylist: {
+    id: number;
+    title: string | null;
+  };
+  sourceSongCount: number;
+  targetPlaylistId: string;
+};
+
 export type PlaylistShareResolveResponse = {
   link: PlaylistShareLink;
   playlist: Omit<PlaylistSummary, "role" | "status" | "itemCount">;
@@ -389,6 +401,19 @@ export async function apiGetPlaylistItems(
     credentials: "include",
   });
   return readJson<PlaylistItemsResponse>(res);
+}
+
+export async function apiImportQqPlaylist(
+  playlistId: string,
+  input: { source: string; expectedRevision: number },
+): Promise<PlaylistImportQqResponse> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/import/qq`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  return readJson<PlaylistImportQqResponse>(res);
 }
 
 export async function apiAddPlaylistItem(

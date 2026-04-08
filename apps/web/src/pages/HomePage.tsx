@@ -6,6 +6,7 @@ import {
   apiCreatePlaylistShareLink,
   apiGetPlaylistDetail,
   apiGetPlaylistItems,
+  apiImportQqPlaylist,
   apiListPlaylists,
   apiQqSearch,
   apiReorderPlaylistItems,
@@ -61,6 +62,7 @@ export default function HomePage() {
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [shareLinkScope, setShareLinkScope] = useState<"read" | "edit" | null>(null);
   const [shareLinkLoading, setShareLinkLoading] = useState(false);
+  const [playlistImportLoading, setPlaylistImportLoading] = useState(false);
 
   // Daily recommendation
   const [dailySongs, setDailySongs] = useState<DailySong[]>([]);
@@ -80,6 +82,11 @@ export default function HomePage() {
   }
 
   const selectedPlaylist = playlists.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
+  const canImportToSelectedPlaylist = Boolean(
+    selectedPlaylist &&
+    selectedPlaylist.status === "active" &&
+    (selectedPlaylist.role === "owner" || selectedPlaylist.role === "editor"),
+  );
 
   function patchPlaylistInState(playlistId: string, patch: Partial<PlaylistSummary>) {
     setPlaylists((prev) =>
@@ -434,6 +441,46 @@ export default function HomePage() {
     }
   }
 
+  async function importIntoSelectedPlaylist() {
+    if (!selectedPlaylist) {
+      showToast("请先选择歌单");
+      return;
+    }
+
+    if (!canImportToSelectedPlaylist) {
+      showToast("当前歌单不可编辑");
+      return;
+    }
+
+    const source = window.prompt("输入 QQ 音乐歌单链接或歌单 ID");
+    if (source === null) return;
+
+    const trimmedSource = source.trim();
+    if (!trimmedSource) {
+      showToast("请输入 QQ 音乐歌单链接或歌单 ID");
+      return;
+    }
+
+    try {
+      setPlaylistImportLoading(true);
+      const result = await apiImportQqPlaylist(selectedPlaylist.id, {
+        source: trimmedSource,
+        expectedRevision: selectedPlaylist.revision,
+      });
+      await reloadSelectedPlaylistData(selectedPlaylist.id);
+      const sourceTitle = result.sourcePlaylist.title ? `《${result.sourcePlaylist.title}》` : "QQ 歌单";
+      showToast(`${sourceTitle} 导入完成：新增 ${result.importedCount} 首，跳过 ${result.skippedCount} 首`);
+    } catch (e) {
+      const message = (e as Error).message;
+      if (message === "Playlist revision conflict") {
+        await reloadSelectedPlaylistData(selectedPlaylist.id);
+      }
+      showToast(message);
+    } finally {
+      setPlaylistImportLoading(false);
+    }
+  }
+
   async function copyShareLink() {
     if (!shareLink) return;
     try {
@@ -710,6 +757,13 @@ export default function HomePage() {
                         </div>
                       </div>
                       <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => void importIntoSelectedPlaylist()}
+                          disabled={playlistImportLoading || !canImportToSelectedPlaylist}
+                        >
+                          {playlistImportLoading ? "导入中…" : "导入 QQ 歌单"}
+                        </button>
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => void generateShareLink("read")}
