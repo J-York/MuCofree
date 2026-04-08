@@ -483,18 +483,7 @@ export default function PlazaPage() {
 
       {/* Toast */}
       {toast ? (
-        <div
-          className="alert alert-success"
-          style={{
-            position: "fixed",
-            bottom: 96,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 300,
-            boxShadow: "var(--shadow-float)",
-            whiteSpace: "nowrap"
-          }}
-        >
+        <div className="alert alert-success toast-fixed">
           {toast}
         </div>
       ) : null}
