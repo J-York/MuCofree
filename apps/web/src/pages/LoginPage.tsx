@@ -49,7 +49,7 @@ export default function LoginPage() {
         <div className="login-card">
           {/* Header */}
           <div className="login-header">
-            <div className="login-logo-mark">♫</div>
+            <img src="/icon.svg" alt="MuCofree" className="login-logo-mark" />
             <h1 className="login-title">音乐广场</h1>
             <p className="login-subtitle">打工人的音乐分享空间</p>
           </div>

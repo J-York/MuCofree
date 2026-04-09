@@ -229,15 +229,8 @@ button {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--teal) 0%, var(--teal-mid) 100%);
-  color: var(--cream);
-  display: grid;
-  place-items: center;
-  font-family: var(--font-serif);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
   flex-shrink: 0;
+  object-fit: contain;
   box-shadow: 0 2px 8px rgba(45, 106, 106, 0.25);
   transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
@@ -1311,13 +1304,7 @@ button {
   width: 52px;
   height: 52px;
   border-radius: 16px;
-  background: linear-gradient(135deg, var(--teal) 0%, var(--teal-mid) 100%);
-  color: var(--cream);
-  display: grid;
-  place-items: center;
-  font-family: var(--font-serif);
-  font-size: 26px;
-  font-weight: 700;
+  object-fit: contain;
   margin: 0 auto 16px;
   box-shadow: 0 4px 20px rgba(45, 106, 106, 0.3);
 }

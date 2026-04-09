@@ -36,7 +36,7 @@ function SiteHeader() {
       <div className="container site-header-inner">
         {/* Logo */}
         <NavLink to="/" className="logo">
-          <div className="logo-mark">♫</div>
+          <img src="/icon.svg" alt="MuCofree" className="logo-mark" />
           <div>
             <div className="logo-text">音乐广场</div>
             <div className="logo-sub">打工人的音乐分享</div>
