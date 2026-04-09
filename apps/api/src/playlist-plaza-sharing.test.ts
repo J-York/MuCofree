@@ -6,6 +6,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createApp } from "./index.js";
+import { createCsrfAgent } from "./test-helpers.js";
 
 const tempDirs: string[] = [];
 
@@ -17,6 +18,8 @@ type PlaylistPayload = {
 describe("playlist plaza sharing api", () => {
   let db: Db;
   let app: express.Express;
+  let ownerClient: ReturnType<typeof createCsrfAgent>;
+  let viewerClient: ReturnType<typeof createCsrfAgent>;
   let ownerAgent: request.SuperAgentTest;
   let viewerAgent: request.SuperAgentTest;
 
@@ -34,8 +37,10 @@ describe("playlist plaza sharing api", () => {
       false,
     );
 
-    ownerAgent = request.agent(app);
-    viewerAgent = request.agent(app);
+    ownerClient = createCsrfAgent(app);
+    viewerClient = createCsrfAgent(app);
+    ownerAgent = ownerClient.agent;
+    viewerAgent = viewerClient.agent;
   });
 
   afterEach(() => {
@@ -45,7 +50,11 @@ describe("playlist plaza sharing api", () => {
     }
   });
 
-  async function register(agent: request.SuperAgentTest, username: string) {
+  async function register(
+    agent: request.SuperAgentTest,
+    username: string,
+    setToken: (token: string | null) => void,
+  ) {
     const response = await agent.post("/api/auth/register").send({
       username,
       password: "password123",
@@ -53,6 +62,7 @@ describe("playlist plaza sharing api", () => {
     });
 
     expect(response.status).toBe(201);
+    setToken(response.body.csrfToken as string | null);
     return response.body.user as { id: number; username: string };
   }
 
@@ -89,8 +99,8 @@ describe("playlist plaza sharing api", () => {
   }
 
   it("creates playlist shares for owners and exposes them in plaza stats and feeds", async () => {
-    const owner = await register(ownerAgent, "plaza_owner");
-    await register(viewerAgent, "plaza_viewer");
+    const owner = await register(ownerAgent, "plaza_owner", ownerClient.setCsrfToken);
+    await register(viewerAgent, "plaza_viewer", viewerClient.setCsrfToken);
 
     const playlist = await createPlaylist(ownerAgent, "Office Mix");
     await addSong(ownerAgent, playlist.id, "office-song-1", playlist.revision);
@@ -142,8 +152,8 @@ describe("playlist plaza sharing api", () => {
   });
 
   it("rejects empty playlist shares and non-owner playlist shares", async () => {
-    await register(ownerAgent, "policy_owner");
-    await register(viewerAgent, "policy_viewer");
+    await register(ownerAgent, "policy_owner", ownerClient.setCsrfToken);
+    await register(viewerAgent, "policy_viewer", viewerClient.setCsrfToken);
 
     const emptyPlaylist = await createPlaylist(ownerAgent, "Empty Playlist");
     const emptyShareResponse = await ownerAgent.post(`/api/playlists/${emptyPlaylist.id}/shares`).send({
@@ -165,8 +175,8 @@ describe("playlist plaza sharing api", () => {
   });
 
   it("prevents duplicate playlist shares and revokes share access after deletion", async () => {
-    const owner = await register(ownerAgent, "duplicate_owner");
-    await register(viewerAgent, "duplicate_viewer");
+    const owner = await register(ownerAgent, "duplicate_owner", ownerClient.setCsrfToken);
+    await register(viewerAgent, "duplicate_viewer", viewerClient.setCsrfToken);
 
     const playlist = await createPlaylist(ownerAgent, "Deep Work");
     await addSong(ownerAgent, playlist.id, "deep-work-song", playlist.revision);
@@ -205,7 +215,7 @@ describe("playlist plaza sharing api", () => {
   });
 
   it("filters expired playlist shares out of feeds, stats, and user previews", async () => {
-    const owner = await register(ownerAgent, "expired_share_owner");
+    const owner = await register(ownerAgent, "expired_share_owner", ownerClient.setCsrfToken);
 
     const playlist = await createPlaylist(ownerAgent, "Expired Mix");
     await addSong(ownerAgent, playlist.id, "expired-song-1", playlist.revision);
@@ -249,7 +259,7 @@ describe("playlist plaza sharing api", () => {
   });
 
   it("returns the actual latest share type in user previews", async () => {
-    await register(ownerAgent, "preview_owner");
+    await register(ownerAgent, "preview_owner", ownerClient.setCsrfToken);
 
     const songPlaylist = await createPlaylist(ownerAgent, "Song Source");
     await addSong(ownerAgent, songPlaylist.id, "preview-song-1", songPlaylist.revision);

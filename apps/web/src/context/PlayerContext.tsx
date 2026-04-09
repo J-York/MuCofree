@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiQqSongUrl } from "../api";
 
 export type PlayerSong = {
@@ -105,7 +105,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     shuffleHistoryRef.current = history;
   }, [resetShuffleState]);
 
-  function cyclePlayMode() {
+  const cyclePlayMode = useCallback(() => {
     setPlayMode((m) => {
       const nextMode: PlayMode = m === "sequential" ? "repeat-one" : m === "repeat-one" ? "shuffle" : "sequential";
       playModeRef.current = nextMode;
@@ -116,7 +116,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       return nextMode;
     });
-  }
+  }, [currentIndex, ensureShuffleState, queue.length, resetShuffleState]);
 
   const fetchAndPlay = useCallback(async (song: PlayerSong, idx: number, newQueue?: PlayerSong[]) => {
     setLoadingMid(song.mid);
@@ -139,7 +139,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  function play(song: PlayerSong, extraQueue?: PlayerSong[], source?: QueueSource, sourceKey?: string | null) {
+  const play = useCallback((song: PlayerSong, extraQueue?: PlayerSong[], source?: QueueSource, sourceKey?: string | null) => {
     const newQueue = extraQueue ?? [song];
     const idx = newQueue.findIndex((s) => s.mid === song.mid);
     const safeIndex = idx === -1 ? 0 : idx;
@@ -154,9 +154,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       resetShuffleState(-1, 0);
     }
     void fetchAndPlay(song, safeIndex, newQueue);
-  }
+  }, [fetchAndPlay, resetShuffleState]);
 
-  function enqueue(song: PlayerSong) {
+  const enqueue = useCallback((song: PlayerSong) => {
     setQueue((q) => {
       if (q.find((s) => s.mid === song.mid)) return q;
       const nextQueue = [...q, song];
@@ -169,9 +169,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       return nextQueue;
     });
-  }
+  }, [currentIndex, ensureShuffleState]);
 
-  function appendToPlaylistQueue(song: PlayerSong, playlistId?: string | null) {
+  const appendToPlaylistQueue = useCallback((song: PlayerSong, playlistId?: string | null) => {
     if (queueSourceRef.current !== "playlist") return;
     if (!playlistId || !queueSourceKeyRef.current || playlistId !== queueSourceKeyRef.current) return;
     setQueue((q) => {
@@ -186,9 +186,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       return nextQueue;
     });
-  }
+  }, [currentIndex, ensureShuffleState]);
 
-  function removeFromPlaylistQueue(songMid: string, playlistId?: string | null) {
+  const removeFromPlaylistQueue = useCallback((songMid: string, playlistId?: string | null) => {
     if (queueSourceRef.current !== "playlist") return;
     if (!playlistId || !queueSourceKeyRef.current || playlistId !== queueSourceKeyRef.current) return;
     setQueue((q) => {
@@ -251,7 +251,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       return nextQueue;
     });
-  }
+  }, [currentIndex, ensureShuffleState, fetchAndPlay, resetShuffleState]);
 
   const playIndex = useCallback((index: number) => {
     setQueue((q) => {
@@ -290,7 +290,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
           void fetchAndPlay(q[nextIndex]!, nextIndex);
         } else {
-          const nextIdx = idx + 1 >= q.length ? 0 : idx + 1;
+          const nextIdx = idx + 1;
+          if (nextIdx >= q.length) {
+            setPlaying(false);
+            return q;
+          }
           void fetchAndPlay(q[nextIdx]!, nextIdx);
         }
         return q;
@@ -322,7 +326,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   }, [ensureShuffleState, fetchAndPlay]);
 
-  function clearQueue() {
+  const clearQueue = useCallback(() => {
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
@@ -337,13 +341,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setCurrentIndex(-1);
     setAudioUrl(null);
     setPlaying(false);
-  }
+  }, [resetShuffleState]);
 
-  function isCurrentSong(mid: string) {
-    return currentSong?.mid === mid;
-  }
+  const isCurrentSong = useCallback((mid: string) => currentSong?.mid === mid, [currentSong]);
 
-  function togglePlayPause() {
+  const togglePlayPause = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
@@ -356,44 +358,74 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.pause();
       setPlaying(false);
     }
-  }
+  }, []);
 
-  const canPrev = playMode === "shuffle"
-    ? shuffleHistoryRef.current.length > 1
-    : currentIndex > 0;
-  const canNext = playMode === "shuffle"
-    ? queue.length > 1
-    : queue.length > 0 && currentIndex < queue.length - 1;
+  const canPrev = useMemo(
+    () => (playMode === "shuffle" ? shuffleHistoryRef.current.length > 1 : currentIndex > 0),
+    [currentIndex, playMode],
+  );
+  const canNext = useMemo(
+    () => (playMode === "shuffle" ? queue.length > 1 : queue.length > 0 && currentIndex >= 0 && currentIndex < queue.length - 1),
+    [currentIndex, playMode, queue.length],
+  );
+
+  const contextValue = useMemo(
+    () => ({
+      queue,
+      currentIndex,
+      currentSong,
+      playing,
+      audioUrl,
+      loadingMid,
+      errorMsg,
+      playMode,
+      queueSource,
+      canPrev,
+      canNext,
+      play,
+      enqueue,
+      appendToPlaylistQueue,
+      removeFromPlaylistQueue,
+      playIndex,
+      next,
+      prev,
+      clearQueue,
+      setPlayingState: setPlaying,
+      isCurrentSong,
+      togglePlayPause,
+      cyclePlayMode,
+      audioRef
+    }),
+    [
+      audioRef,
+      audioUrl,
+      canNext,
+      canPrev,
+      clearQueue,
+      currentIndex,
+      currentSong,
+      enqueue,
+      errorMsg,
+      loadingMid,
+      next,
+      play,
+      playIndex,
+      playMode,
+      playing,
+      prev,
+      queue,
+      queueSource,
+      appendToPlaylistQueue,
+      removeFromPlaylistQueue,
+      setPlaying,
+      togglePlayPause,
+      cyclePlayMode,
+      isCurrentSong,
+    ],
+  );
 
   return (
-    <PlayerContext.Provider
-      value={{
-        queue,
-        currentIndex,
-        currentSong,
-        playing,
-        audioUrl,
-        loadingMid,
-        errorMsg,
-        playMode,
-        queueSource,
-        canPrev,
-        canNext,
-        play,
-        enqueue,
-        appendToPlaylistQueue,
-        removeFromPlaylistQueue,
-        playIndex,
-        next,
-        prev,
-        clearQueue,
-        setPlayingState: setPlaying,
-        isCurrentSong,
-        togglePlayPause,
-        cyclePlayMode,
-        audioRef
-      }}
-    >
+    <PlayerContext.Provider value={contextValue}>
       {children}
     </PlayerContext.Provider>
   );

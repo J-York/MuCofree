@@ -32,6 +32,32 @@ async function readJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+let csrfToken: string | null = null;
+
+type ApiFetchOptions = RequestInit & { skipCsrf?: boolean };
+
+function setCsrfToken(token: string | null | undefined) {
+  csrfToken = token ?? null;
+}
+
+async function apiFetch(url: string, init: ApiFetchOptions = {}) {
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers = new Headers(init.headers ?? {});
+
+  if (!SAFE_METHODS.has(method) && !init.skipCsrf && csrfToken) {
+    headers.set("x-csrf-token", csrfToken);
+  }
+
+  const res = await fetch(url, {
+    ...init,
+    method,
+    headers,
+    credentials: "include",
+  });
+  return res;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type User = {
@@ -175,7 +201,7 @@ export type PlaylistShare = {
   createdAt: string;
 };
 
-export type HomeResponse = { users: User[] };
+export type HomeResponse = { users: User[]; nextCursor: number | null };
 
 // ── Paginated feed types ───────────────────────────────────────────────────────
 
@@ -232,6 +258,16 @@ export type PlazaStatsResponse = {
   playlistShares: number;
 };
 
+export type AuthResponse = {
+  user: User;
+  csrfToken: string;
+};
+
+export type MeResponse = {
+  user: User | null;
+  csrfToken: string | null;
+};
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function apiRegister(input: {
@@ -239,49 +275,60 @@ export async function apiRegister(input: {
   password: string;
   name: string;
   avatarUrl?: string | null;
-}): Promise<{ user: User }> {
-  const res = await fetch("/api/auth/register", {
+}): Promise<AuthResponse> {
+  const res = await apiFetch("/api/auth/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include"
+    skipCsrf: true,
   });
-  return readJson<{ user: User }>(res);
+  const data = await readJson<AuthResponse>(res);
+  setCsrfToken(data.csrfToken);
+  return data;
 }
 
 export async function apiLogin(input: {
   username: string;
   password: string;
-}): Promise<{ user: User }> {
-  const res = await fetch("/api/auth/login", {
+}): Promise<AuthResponse> {
+  const res = await apiFetch("/api/auth/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include"
+    skipCsrf: true,
   });
-  return readJson<{ user: User }>(res);
+  const data = await readJson<AuthResponse>(res);
+  setCsrfToken(data.csrfToken);
+  return data;
 }
 
 export async function apiLogout(): Promise<{ ok: boolean }> {
-  const res = await fetch("/api/auth/logout", {
+  const res = await apiFetch("/api/auth/logout", {
     method: "POST",
-    credentials: "include"
   });
-  return readJson<{ ok: boolean }>(res);
+  const data = await readJson<{ ok: boolean }>(res);
+  setCsrfToken(null);
+  return data;
 }
 
-export async function apiMe(): Promise<{ user: User | null }> {
-  const res = await fetch("/api/auth/me", {
+export async function apiMe(): Promise<MeResponse> {
+  const res = await apiFetch("/api/auth/me", {
     method: "GET",
-    credentials: "include"
   });
-  return readJson<{ user: User | null }>(res);
+  const data = await readJson<MeResponse>(res);
+  setCsrfToken(data.csrfToken);
+  return data;
 }
 
 // ── Users / Home ──────────────────────────────────────────────────────────────
 
-export async function apiHome(): Promise<HomeResponse> {
-  const res = await fetch("/api/home", { method: "GET", credentials: "include" });
+export async function apiHome(cursor?: number | null, limit = 20, sharesPerUser = 10): Promise<HomeResponse> {
+  const sp = new URLSearchParams();
+  sp.set("limit", String(limit));
+  sp.set("sharesPerUser", String(sharesPerUser));
+  if (cursor != null) sp.set("cursor", String(cursor));
+
+  const res = await apiFetch(`/api/home?${sp.toString()}`, { method: "GET" });
   return readJson<HomeResponse>(res);
 }
 
@@ -289,7 +336,7 @@ export async function apiSharesFeed(cursor?: number | null, limit = 20): Promise
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
   if (cursor != null) sp.set("cursor", String(cursor));
-  const res = await fetch(`/api/shares/feed?${sp.toString()}`, { method: "GET", credentials: "include" });
+  const res = await apiFetch(`/api/shares/feed?${sp.toString()}`, { method: "GET" });
   return readJson<FeedResponse>(res);
 }
 
@@ -300,9 +347,8 @@ export async function apiPlaylistSharesFeed(
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
   if (cursor != null) sp.set("cursor", String(cursor));
-  const res = await fetch(`/api/playlist-shares/feed?${sp.toString()}`, {
+  const res = await apiFetch(`/api/playlist-shares/feed?${sp.toString()}`, {
     method: "GET",
-    credentials: "include",
   });
   return readJson<PlaylistSharesFeedResponse>(res);
 }
@@ -311,17 +357,17 @@ export async function apiUsersList(offset = 0, limit = 20): Promise<UsersRespons
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
   sp.set("offset", String(offset));
-  const res = await fetch(`/api/users?${sp.toString()}`, { method: "GET", credentials: "include" });
+  const res = await apiFetch(`/api/users?${sp.toString()}`, { method: "GET" });
   return readJson<UsersResponse>(res);
 }
 
 export async function apiPlazaStats(): Promise<PlazaStatsResponse> {
-  const res = await fetch("/api/plaza/stats", { method: "GET", credentials: "include" });
+  const res = await apiFetch("/api/plaza/stats", { method: "GET" });
   return readJson<PlazaStatsResponse>(res);
 }
 
 export async function apiGetUser(userId: number): Promise<{ user: User }> {
-  const res = await fetch(`/api/users/${userId}`, { method: "GET", credentials: "include" });
+  const res = await apiFetch(`/api/users/${userId}`, { method: "GET" });
   return readJson<{ user: User }>(res);
 }
 
@@ -335,7 +381,7 @@ export async function apiUserShares(userId: number, cursor?: number | null, limi
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
   if (cursor != null) sp.set("cursor", String(cursor));
-  const res = await fetch(`/api/users/${userId}/shares?${sp.toString()}`, { method: "GET", credentials: "include" });
+  const res = await apiFetch(`/api/users/${userId}/shares?${sp.toString()}`, { method: "GET" });
   return readJson<UserSharesResponse>(res);
 }
 
@@ -349,9 +395,8 @@ export async function apiUserPlaylistShares(userId: number, cursor?: number | nu
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
   if (cursor != null) sp.set("cursor", String(cursor));
-  const res = await fetch(`/api/users/${userId}/playlist-shares?${sp.toString()}`, {
+  const res = await apiFetch(`/api/users/${userId}/playlist-shares?${sp.toString()}`, {
     method: "GET",
-    credentials: "include",
   });
   return readJson<UserPlaylistSharesResponse>(res);
 }
@@ -363,17 +408,16 @@ export async function apiCreateShare(input: {
   songMid: string;
   comment?: string | null;
 }): Promise<{ share: BaseShare }> {
-  const res = await fetch("/api/shares", {
+  const res = await apiFetch("/api/shares", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include"
   });
   return readJson<{ share: BaseShare }>(res);
 }
 
 export async function apiDeleteShare(shareId: number): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/shares/${shareId}`, { method: "DELETE", credentials: "include" });
+  const res = await apiFetch(`/api/shares/${shareId}`, { method: "DELETE" });
   return readJson<{ ok: boolean }>(res);
 }
 
@@ -381,19 +425,17 @@ export async function apiCreatePlaylistShare(
   playlistId: string,
   input: { comment?: string | null } = {},
 ): Promise<{ share: PlaylistShare }> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/shares`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/shares`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include",
   });
   return readJson<{ share: PlaylistShare }>(res);
 }
 
 export async function apiDeletePlaylistShare(shareId: number): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/playlist-shares/${shareId}`, {
+  const res = await apiFetch(`/api/playlist-shares/${shareId}`, {
     method: "DELETE",
-    credentials: "include",
   });
   return readJson<{ ok: boolean }>(res);
 }
@@ -402,19 +444,17 @@ export async function apiSetShareReaction(
   shareId: number,
   reactionKey: ReactionKey,
 ): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/shares/${shareId}/reaction`, {
+  const res = await apiFetch(`/api/shares/${shareId}/reaction`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ reactionKey }),
-    credentials: "include",
   });
   return readJson<{ ok: boolean }>(res);
 }
 
 export async function apiDeleteShareReaction(shareId: number): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/shares/${shareId}/reaction`, {
+  const res = await apiFetch(`/api/shares/${shareId}/reaction`, {
     method: "DELETE",
-    credentials: "include",
   });
   return readJson<{ ok: boolean }>(res);
 }
@@ -435,7 +475,7 @@ export async function apiListPlaylists(offset = 0, limit = 20): Promise<Playlist
   const sp = new URLSearchParams();
   sp.set("offset", String(offset));
   sp.set("limit", String(limit));
-  const res = await fetch(`/api/playlists?${sp.toString()}`, { method: "GET", credentials: "include" });
+  const res = await apiFetch(`/api/playlists?${sp.toString()}`, { method: "GET" });
   return readJson<PlaylistListResponse>(res);
 }
 
@@ -444,19 +484,17 @@ export async function apiCreatePlaylist(input: {
   description?: string | null;
   visibility?: PlaylistVisibility;
 }): Promise<{ playlist: PlaylistSummary }> {
-  const res = await fetch("/api/playlists", {
+  const res = await apiFetch("/api/playlists", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include",
   });
   return readJson<{ playlist: PlaylistSummary }>(res);
 }
 
 export async function apiGetPlaylistDetail(playlistId: string): Promise<PlaylistDetailResponse> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}`, {
     method: "GET",
-    credentials: "include",
   });
   return readJson<PlaylistDetailResponse>(res);
 }
@@ -470,11 +508,10 @@ export async function apiUpdatePlaylist(
     visibility?: PlaylistVisibility;
   },
 ): Promise<{ playlist: PlaylistSummary }> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include",
   });
   return readJson<{ playlist: PlaylistSummary }>(res);
 }
@@ -482,9 +519,8 @@ export async function apiUpdatePlaylist(
 export async function apiArchivePlaylist(playlistId: string, expectedRevision: number): Promise<{ ok: boolean }> {
   const sp = new URLSearchParams();
   sp.set("expectedRevision", String(expectedRevision));
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}?${sp.toString()}`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}?${sp.toString()}`, {
     method: "DELETE",
-    credentials: "include",
   });
   return readJson<{ ok: boolean }>(res);
 }
@@ -497,9 +533,8 @@ export async function apiGetPlaylistItems(
   const sp = new URLSearchParams();
   sp.set("offset", String(offset));
   sp.set("limit", String(limit));
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items?${sp.toString()}`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/items?${sp.toString()}`, {
     method: "GET",
-    credentials: "include",
   });
   return readJson<PlaylistItemsResponse>(res);
 }
@@ -508,11 +543,10 @@ export async function apiImportQqPlaylist(
   playlistId: string,
   input: { source: string; expectedRevision: number },
 ): Promise<PlaylistImportQqResponse> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/import/qq`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/import/qq`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include",
   });
   return readJson<PlaylistImportQqResponse>(res);
 }
@@ -521,11 +555,10 @@ export async function apiAddPlaylistItem(
   playlistId: string,
   input: PlaylistSongInput & { expectedRevision: number },
 ): Promise<{ item: PlaylistItem; revision: number }> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/items`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include",
   });
   return readJson<{ item: PlaylistItem; revision: number }>(res);
 }
@@ -537,9 +570,9 @@ export async function apiRemovePlaylistItem(
 ): Promise<{ ok: boolean; revision: number }> {
   const sp = new URLSearchParams();
   sp.set("expectedRevision", String(expectedRevision));
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/playlists/${encodeURIComponent(playlistId)}/items/${encodeURIComponent(songMid)}?${sp.toString()}`,
-    { method: "DELETE", credentials: "include" },
+    { method: "DELETE" },
   );
   return readJson<{ ok: boolean; revision: number }>(res);
 }
@@ -549,11 +582,10 @@ export async function apiReorderPlaylistItems(
   songMids: string[],
   expectedRevision: number,
 ): Promise<{ items: PlaylistItem[]; revision: number }> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/items/reorder`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/items/reorder`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ songMids, expectedRevision }),
-    credentials: "include",
   });
   return readJson<{ items: PlaylistItem[]; revision: number }>(res);
 }
@@ -562,19 +594,17 @@ export async function apiCreatePlaylistShareLink(
   playlistId: string,
   input: { scope?: PlaylistShareScope; expiresInHours?: number; maxUses?: number | null },
 ): Promise<{ link: PlaylistShareLink; token: string; sharePath: string }> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/share-links`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/share-links`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include",
   });
   return readJson<{ link: PlaylistShareLink; token: string; sharePath: string }>(res);
 }
 
 export async function apiResolvePlaylistShareToken(token: string): Promise<PlaylistShareResolveResponse> {
-  const res = await fetch(`/api/playlists/share/${encodeURIComponent(token)}`, {
+  const res = await apiFetch(`/api/playlists/share/${encodeURIComponent(token)}`, {
     method: "GET",
-    credentials: "include",
   });
   return readJson<PlaylistShareResolveResponse>(res);
 }
@@ -584,9 +614,8 @@ export async function apiJoinPlaylistShareToken(token: string): Promise<{
   membership: PlaylistMember;
   link: PlaylistShareLink;
 }> {
-  const res = await fetch(`/api/playlists/share/${encodeURIComponent(token)}/join`, {
+  const res = await apiFetch(`/api/playlists/share/${encodeURIComponent(token)}/join`, {
     method: "POST",
-    credentials: "include",
   });
   return readJson<{
     playlist: Omit<PlaylistSummary, "role" | "status" | "itemCount">;
@@ -596,9 +625,8 @@ export async function apiJoinPlaylistShareToken(token: string): Promise<{
 }
 
 export async function apiRevokePlaylistShareLink(linkId: number): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/playlists/share-links/${linkId}`, {
+  const res = await apiFetch(`/api/playlists/share-links/${linkId}`, {
     method: "DELETE",
-    credentials: "include",
   });
   return readJson<{ ok: boolean }>(res);
 }
@@ -608,11 +636,10 @@ export async function apiUpdatePlaylistMember(
   userId: number,
   input: { role: "editor" | "viewer"; status?: PlaylistMemberStatus; expectedRevision: number },
 ): Promise<{ member: PlaylistMember; revision: number }> {
-  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/members/${userId}`, {
+  const res = await apiFetch(`/api/playlists/${encodeURIComponent(playlistId)}/members/${userId}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
-    credentials: "include",
   });
   return readJson<{ member: PlaylistMember; revision: number }>(res);
 }
@@ -624,9 +651,9 @@ export async function apiRemovePlaylistMember(
 ): Promise<{ ok: boolean; revision: number }> {
   const sp = new URLSearchParams();
   sp.set("expectedRevision", String(expectedRevision));
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/playlists/${encodeURIComponent(playlistId)}/members/${userId}?${sp.toString()}`,
-    { method: "DELETE", credentials: "include" },
+    { method: "DELETE" },
   );
   return readJson<{ ok: boolean; revision: number }>(res);
 }
@@ -706,7 +733,7 @@ export type DailyRecommendResponse = {
 
 export async function apiRecommendDaily(refresh = false): Promise<DailyRecommendResponse> {
   const url = refresh ? "/api/recommend/daily?refresh=1" : "/api/recommend/daily";
-  const res = await fetch(url, { method: "GET", credentials: "include" });
+  const res = await apiFetch(url, { method: "GET" });
   return readJson<DailyRecommendResponse>(res);
 }
 
@@ -798,7 +825,7 @@ export async function apiQqSearch(keyword: string, signal?: AbortSignal): Promis
   sp.set("type", "song");
   sp.set("num", "20");
 
-  const res = await fetch(`/api/qq/search?${sp.toString()}`, { credentials: "include", signal });
+  const res = await apiFetch(`/api/qq/search?${sp.toString()}`, { signal });
   const payload = await readJson<unknown>(res);
 
   const list = extractSongList(payload);
@@ -823,7 +850,7 @@ export async function apiQqSongUrl(mid: string, quality = "320"): Promise<string
   const sp = new URLSearchParams();
   sp.set("mid", mid);
   sp.set("quality", quality);
-  const res = await fetch(`/api/qq/song/url?${sp.toString()}`, { credentials: "include" });
+  const res = await apiFetch(`/api/qq/song/url?${sp.toString()}`);
   const payload = await readJson<unknown>(res);
   const data = asRecord(asRecord(payload).data);
   const url = data[mid];

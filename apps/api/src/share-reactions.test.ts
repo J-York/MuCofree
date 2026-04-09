@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createApp } from "./index.js";
 import { createEmptyReactionCounts, reactionKeys, reactionSchema } from "./share-reactions.js";
+import { createCsrfAgent } from "./test-helpers.js";
 
 describe("share reactions domain", () => {
   it("exposes the fixed reaction whitelist", () => {
@@ -40,6 +41,8 @@ type RegisteredUser = {
 
 describe("share reactions api", () => {
   let db: Db;
+  let ownerClient: ReturnType<typeof createCsrfAgent>;
+  let viewerClient: ReturnType<typeof createCsrfAgent>;
   let ownerAgent: request.SuperAgentTest;
   let viewerAgent: request.SuperAgentTest;
 
@@ -57,8 +60,10 @@ describe("share reactions api", () => {
       false,
     );
 
-    ownerAgent = request.agent(app);
-    viewerAgent = request.agent(app);
+    ownerClient = createCsrfAgent(app);
+    viewerClient = createCsrfAgent(app);
+    ownerAgent = ownerClient.agent;
+    viewerAgent = viewerClient.agent;
   });
 
   afterEach(() => {
@@ -73,6 +78,7 @@ describe("share reactions api", () => {
     agent: request.SuperAgentTest,
     username: string,
     name: string,
+    setToken: (token: string | null) => void,
   ): Promise<RegisteredUser> {
     const response = await agent.post("/api/auth/register").send({
       username,
@@ -81,6 +87,7 @@ describe("share reactions api", () => {
     });
 
     expect(response.status).toBe(201);
+    setToken(response.body.csrfToken as string | null);
 
     return {
       id: response.body.user.id as number,
@@ -117,9 +124,9 @@ describe("share reactions api", () => {
   }
 
   it("lets a viewer set, switch, and clear a reaction while exposing read-model fields", async () => {
-    const owner = await registerUser(ownerAgent, "owner_user", "Owner User");
+    const owner = await registerUser(ownerAgent, "owner_user", "Owner User", ownerClient.setCsrfToken);
     const share = await createShare(ownerAgent);
-    const viewer = await registerUser(viewerAgent, "viewer_user", "Viewer User");
+    const viewer = await registerUser(viewerAgent, "viewer_user", "Viewer User", viewerClient.setCsrfToken);
 
     const initialFeedResponse = await viewerAgent.get("/api/shares/feed");
     expect(initialFeedResponse.status).toBe(200);
@@ -202,9 +209,9 @@ describe("share reactions api", () => {
   });
 
   it("rejects invalid reaction keys", async () => {
-    await registerUser(ownerAgent, "owner_invalid", "Owner Invalid");
+    await registerUser(ownerAgent, "owner_invalid", "Owner Invalid", ownerClient.setCsrfToken);
     const share = await createShare(ownerAgent);
-    await registerUser(viewerAgent, "viewer_invalid", "Viewer Invalid");
+    await registerUser(viewerAgent, "viewer_invalid", "Viewer Invalid", viewerClient.setCsrfToken);
 
     const response = await viewerAgent.put(`/api/shares/${share.id}/reaction`).send({
       reactionKey: "invalid_key",
@@ -215,7 +222,7 @@ describe("share reactions api", () => {
   });
 
   it("rejects owners reacting to their own shares", async () => {
-    await registerUser(ownerAgent, "owner_self", "Owner Self");
+    await registerUser(ownerAgent, "owner_self", "Owner Self", ownerClient.setCsrfToken);
     const share = await createShare(ownerAgent);
 
     const response = await ownerAgent.put(`/api/shares/${share.id}/reaction`).send({
