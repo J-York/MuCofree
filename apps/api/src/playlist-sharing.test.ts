@@ -6,6 +6,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createApp } from "./index.js";
+import { createCsrfAgent } from "./test-helpers.js";
 
 const tempDirs: string[] = [];
 
@@ -17,6 +18,9 @@ type PlaylistPayload = {
 describe("playlist sharing api", () => {
   let db: Db;
   let app: express.Express;
+  let ownerClient: ReturnType<typeof createCsrfAgent>;
+  let viewerClient: ReturnType<typeof createCsrfAgent>;
+  let editorClient: ReturnType<typeof createCsrfAgent>;
   let ownerAgent: request.SuperAgentTest;
   let viewerAgent: request.SuperAgentTest;
   let editorAgent: request.SuperAgentTest;
@@ -35,9 +39,12 @@ describe("playlist sharing api", () => {
       false,
     );
 
-    ownerAgent = request.agent(app);
-    viewerAgent = request.agent(app);
-    editorAgent = request.agent(app);
+    ownerClient = createCsrfAgent(app);
+    viewerClient = createCsrfAgent(app);
+    editorClient = createCsrfAgent(app);
+    ownerAgent = ownerClient.agent;
+    viewerAgent = viewerClient.agent;
+    editorAgent = editorClient.agent;
   });
 
   afterEach(() => {
@@ -47,7 +54,11 @@ describe("playlist sharing api", () => {
     }
   });
 
-  async function register(agent: request.SuperAgentTest, username: string) {
+  async function register(
+    agent: request.SuperAgentTest,
+    username: string,
+    setToken: (token: string | null) => void,
+  ) {
     const response = await agent.post("/api/auth/register").send({
       username,
       password: "password123",
@@ -55,6 +66,7 @@ describe("playlist sharing api", () => {
     });
 
     expect(response.status).toBe(201);
+    setToken(response.body.csrfToken as string | null);
     return response.body.user as { id: number; username: string };
   }
 
@@ -80,8 +92,8 @@ describe("playlist sharing api", () => {
   }
 
   it("requires login for share access and supports read-only join + revoke", async () => {
-    await register(ownerAgent, "share_owner");
-    await register(viewerAgent, "share_viewer");
+    await register(ownerAgent, "share_owner", ownerClient.setCsrfToken);
+    await register(viewerAgent, "share_viewer", viewerClient.setCsrfToken);
 
     const playlist = await createPlaylist(ownerAgent, "Shareable");
     const addSongResponse = await addSong(ownerAgent, playlist.id, "share-song-1", playlist.revision);
@@ -123,8 +135,8 @@ describe("playlist sharing api", () => {
   });
 
   it("uses pending editor flow and surfaces revision conflicts", async () => {
-    const owner = await register(ownerAgent, "collab_owner");
-    const editor = await register(editorAgent, "collab_editor");
+    const owner = await register(ownerAgent, "collab_owner", ownerClient.setCsrfToken);
+    const editor = await register(editorAgent, "collab_editor", editorClient.setCsrfToken);
 
     const playlist = await createPlaylist(ownerAgent, "Collab Playlist");
 
@@ -172,8 +184,8 @@ describe("playlist sharing api", () => {
   });
 
   it("rejects expired share links", async () => {
-    await register(ownerAgent, "expired_owner");
-    await register(viewerAgent, "expired_viewer");
+    await register(ownerAgent, "expired_owner", ownerClient.setCsrfToken);
+    await register(viewerAgent, "expired_viewer", viewerClient.setCsrfToken);
 
     const playlist = await createPlaylist(ownerAgent, "Expiring Playlist");
 
@@ -193,8 +205,8 @@ describe("playlist sharing api", () => {
   });
 
   it("only allows sharing songs from an editable playlist", async () => {
-    await register(ownerAgent, "share_policy_owner");
-    await register(viewerAgent, "share_policy_viewer");
+    await register(ownerAgent, "share_policy_owner", ownerClient.setCsrfToken);
+    await register(viewerAgent, "share_policy_viewer", viewerClient.setCsrfToken);
 
     const playlist = await createPlaylist(ownerAgent, "Share Policy Playlist");
     const addSongResponse = await addSong(ownerAgent, playlist.id, "share-policy-song", playlist.revision);

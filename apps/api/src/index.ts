@@ -141,6 +141,7 @@ type PlaylistWithRoleRow = PlaylistRow & {
 declare module "express-session" {
   interface SessionData {
     userId?: number;
+    csrfToken?: string;
   }
 }
 
@@ -203,6 +204,33 @@ function httpError(status: number, message: string, options?: { expose?: boolean
   }
   return err;
 }
+
+function isSafeMethod(method: string | undefined) {
+  const normalized = (method ?? "GET").toUpperCase();
+  return normalized === "GET" || normalized === "HEAD" || normalized === "OPTIONS" || normalized === "TRACE";
+}
+
+function ensureCsrfToken(req: express.Request) {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = randomBytes(32).toString("hex");
+  }
+  return req.session.csrfToken;
+}
+
+function regenerateSession(req: express.Request) {
+  return new Promise<void>((resolve, reject) => {
+    req.session.regenerate((err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+const CSRF_EXEMPT_PATHS = new Set<string>(["/api/auth/login", "/api/auth/register"]);
+
 const SHARE_ALREADY_EXISTS_MESSAGE = "这首歌已经分享过了";
 const PLAYLIST_SHARE_ALREADY_EXISTS_MESSAGE = "这个歌单已经分享过了";
 
@@ -431,12 +459,33 @@ function dbGetPlaylistShareCoverUrl(db: Db, playlistId: string): string | null {
   return row?.cover_url ?? null;
 }
 
-function dbAllUsers(db: Db): UserRow[] {
-  return db.prepare("SELECT * FROM users ORDER BY created_at DESC").all() as UserRow[];
+function dbHomeUsers(db: Db, limit: number, cursor: number | null): UserRow[] {
+  const params: Array<number> = [];
+  let sql = "SELECT * FROM users";
+  if (cursor !== null) {
+    sql += " WHERE id < ?";
+    params.push(cursor);
+  }
+  sql += " ORDER BY id DESC LIMIT ?";
+  params.push(limit);
+  return db.prepare(sql).all(...params) as UserRow[];
 }
 
-function dbAllShares(db: Db): ShareRow[] {
-  return db.prepare("SELECT * FROM shares ORDER BY created_at DESC").all() as ShareRow[];
+function dbSharesForUsers(db: Db, userIds: number[], perUserLimit: number): ShareRow[] {
+  if (!userIds.length) return [];
+  const stmt = db.prepare(
+    `SELECT *
+       FROM shares
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT ?`
+  );
+
+  const rows: ShareRow[] = [];
+  for (const userId of userIds) {
+    rows.push(...(stmt.all(userId, perUserLimit) as ShareRow[]));
+  }
+  return rows;
 }
 
 type FeedShareRow = ShareRow & {
@@ -977,6 +1026,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
+      proxy: trustProxy,
       cookie: {
         httpOnly: true,
         sameSite: "lax",
@@ -985,6 +1035,18 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       }
     })
   );
+  app.use((req, _res, next) => {
+    if (isSafeMethod(req.method) || CSRF_EXEMPT_PATHS.has(req.path)) {
+      next();
+      return;
+    }
+    const token = req.get("x-csrf-token");
+    if (!token || !req.session.csrfToken || token !== req.session.csrfToken) {
+      next(httpError(403, "Invalid CSRF token"));
+      return;
+    }
+    next();
+  });
 
   // ── Auth middleware ──────────────────────────────────────────────────────
 
@@ -1033,9 +1095,11 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const user = dbGetUserById(db, Number(info.lastInsertRowid));
       if (!user) throw httpError(500, "Failed to create user");
       dbEnsureDefaultPlaylist(db, user.id);
+      await regenerateSession(req);
       req.session.userId = user.id;
+      const csrfToken = ensureCsrfToken(req);
 
-      res.status(201).json({ user: mapUser(user) });
+      res.status(201).json({ user: mapUser(user), csrfToken });
     } catch (e) {
       next(e);
     }
@@ -1056,8 +1120,11 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const ok = await bcrypt.compare(body.password, user.password_hash);
       if (!ok) throw httpError(401, "用户名或密码错误");
 
+      await regenerateSession(req);
       req.session.userId = user.id;
-      res.json({ user: mapUser(user) });
+      const csrfToken = ensureCsrfToken(req);
+
+      res.json({ user: mapUser(user), csrfToken });
     } catch (e) {
       next(e);
     }
@@ -1072,11 +1139,12 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
 
   app.get("/api/auth/me", (req, res) => {
     if (!req.session.userId) {
-      res.json({ user: null });
+      res.json({ user: null, csrfToken: null });
       return;
     }
     const user = dbGetUserById(db, req.session.userId);
-    res.json({ user: user ? mapUser(user) : null });
+    const csrfToken = ensureCsrfToken(req);
+    res.json({ user: user ? mapUser(user) : null, csrfToken });
   });
 
   // ── Users ────────────────────────────────────────────────────────────────
@@ -1465,23 +1533,39 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
 
   // ── Home feed ────────────────────────────────────────────────────────────
 
-  app.get("/api/home", (_req, res) => {
-    const users = dbAllUsers(db);
-    const shares = dbAllShares(db);
+  app.get("/api/home", (req, res, next) => {
+    try {
+      const query = z
+        .object({
+          limit: z.coerce.number().int().positive().max(50).default(20),
+          cursor: z.coerce.number().int().positive().optional(),
+          sharesPerUser: z.coerce.number().int().positive().max(50).default(10),
+        })
+        .parse(req.query);
 
-    const sharesByUser = new Map<number, ReturnType<typeof mapShare>[]>();
-    for (const s of shares) {
-      const arr = sharesByUser.get(s.user_id) ?? [];
-      arr.push(mapShare(s));
-      sharesByUser.set(s.user_id, arr);
+      const users = dbHomeUsers(db, query.limit, query.cursor ?? null);
+      const userIds = users.map((u) => u.id);
+      const shares = dbSharesForUsers(db, userIds, query.sharesPerUser);
+
+      const sharesByUser = new Map<number, ReturnType<typeof mapShare>[]>();
+      for (const s of shares) {
+        const arr = sharesByUser.get(s.user_id) ?? [];
+        arr.push(mapShare(s));
+        sharesByUser.set(s.user_id, arr);
+      }
+
+      const nextCursor = users.length === query.limit ? users[users.length - 1]!.id : null;
+
+      res.json({
+        users: users.map((u) => ({
+          ...mapUser(u),
+          shares: sharesByUser.get(u.id) ?? []
+        })),
+        nextCursor
+      });
+    } catch (e) {
+      next(e);
     }
-
-    res.json({
-      users: users.map((u) => ({
-        ...mapUser(u),
-        shares: sharesByUser.get(u.id) ?? []
-      }))
-    });
   });
 
   app.get("/api/plaza/stats", (_req, res, next) => {

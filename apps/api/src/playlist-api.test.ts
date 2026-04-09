@@ -7,6 +7,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createApp } from "./index.js";
+import { createCsrfAgent } from "./test-helpers.js";
 
 const tempDirs: string[] = [];
 
@@ -57,6 +58,8 @@ function buildQqPlaylistBody(input: {
 
 describe("playlist api", () => {
   let db: Db;
+  let ownerClient: ReturnType<typeof createCsrfAgent>;
+  let otherClient: ReturnType<typeof createCsrfAgent>;
   let ownerAgent: request.SuperAgentTest;
   let otherAgent: request.SuperAgentTest;
   let qqServer: http.Server;
@@ -104,8 +107,10 @@ describe("playlist api", () => {
       false,
     );
 
-    ownerAgent = request.agent(app);
-    otherAgent = request.agent(app);
+    ownerClient = createCsrfAgent(app);
+    otherClient = createCsrfAgent(app);
+    ownerAgent = ownerClient.agent;
+    otherAgent = otherClient.agent;
   });
 
   afterEach(async () => {
@@ -124,7 +129,11 @@ describe("playlist api", () => {
     }
   });
 
-  async function register(agent: request.SuperAgentTest, username: string) {
+  async function register(
+    agent: request.SuperAgentTest,
+    username: string,
+    setToken: (token: string | null) => void,
+  ) {
     const response = await agent.post("/api/auth/register").send({
       username,
       password: "password123",
@@ -132,6 +141,7 @@ describe("playlist api", () => {
     });
 
     expect(response.status).toBe(201);
+    setToken(response.body.csrfToken as string | null);
     return response.body.user as { id: number; username: string };
   }
 
@@ -142,7 +152,7 @@ describe("playlist api", () => {
   }
 
   it("supports playlist CRUD and item revision workflow", async () => {
-    await register(ownerAgent, "playlist_owner");
+    await register(ownerAgent, "playlist_owner", ownerClient.setCsrfToken);
 
     const listBeforeCreate = await ownerAgent.get("/api/playlists");
     expect(listBeforeCreate.status).toBe(200);
@@ -225,8 +235,8 @@ describe("playlist api", () => {
   });
 
   it("enforces ACL and protects default playlist", async () => {
-    await register(ownerAgent, "playlist_acl_owner");
-    await register(otherAgent, "playlist_acl_other");
+    await register(ownerAgent, "playlist_acl_owner", ownerClient.setCsrfToken);
+    await register(otherAgent, "playlist_acl_other", otherClient.setCsrfToken);
 
     const ownerList = await ownerAgent.get("/api/playlists");
     expect(ownerList.status).toBe(200);
@@ -251,7 +261,7 @@ describe("playlist api", () => {
   });
 
   it("imports a QQ playlist from URL and skips duplicate songs on re-import", async () => {
-    await register(ownerAgent, "playlist_import_owner");
+    await register(ownerAgent, "playlist_import_owner", ownerClient.setCsrfToken);
     const created = await createPlaylist(ownerAgent, "Imported Mix");
 
     qqPlaylistResponder = (playlistId) => ({
@@ -320,7 +330,7 @@ describe("playlist api", () => {
   });
 
   it("caps QQ imports at 500 new songs and reports truncation", async () => {
-    await register(ownerAgent, "playlist_cap_owner");
+    await register(ownerAgent, "playlist_cap_owner", ownerClient.setCsrfToken);
     const created = await createPlaylist(ownerAgent, "Import Target");
 
     const addExistingSongResponse = await ownerAgent.post(`/api/playlists/${created.id}/items`).send({
@@ -377,7 +387,7 @@ describe("playlist api", () => {
   });
 
   it("rejects invalid QQ playlist sources", async () => {
-    await register(ownerAgent, "playlist_invalid_source_owner");
+    await register(ownerAgent, "playlist_invalid_source_owner", ownerClient.setCsrfToken);
     const created = await createPlaylist(ownerAgent, "Import Target");
 
     const response = await ownerAgent.post(`/api/playlists/${created.id}/import/qq`).send({
@@ -390,7 +400,7 @@ describe("playlist api", () => {
   });
 
   it("maps missing QQ playlists to 404", async () => {
-    await register(ownerAgent, "missing_upstream_owner");
+    await register(ownerAgent, "missing_upstream_owner", ownerClient.setCsrfToken);
     const created = await createPlaylist(ownerAgent, "Import Target");
 
     qqPlaylistResponder = () => ({
@@ -408,7 +418,7 @@ describe("playlist api", () => {
   });
 
   it("returns 502 when QQ playlist upstream fails", async () => {
-    await register(ownerAgent, "upstream_fail_owner");
+    await register(ownerAgent, "upstream_fail_owner", ownerClient.setCsrfToken);
     const created = await createPlaylist(ownerAgent, "Import Target");
 
     qqPlaylistResponder = () => ({
@@ -426,7 +436,7 @@ describe("playlist api", () => {
   });
 
   it("rejects stale revisions before contacting QQ upstream", async () => {
-    await register(ownerAgent, "playlist_stale_revision_owner");
+    await register(ownerAgent, "playlist_stale_revision_owner", ownerClient.setCsrfToken);
     const created = await createPlaylist(ownerAgent, "Import Target");
 
     const addSongResponse = await ownerAgent.post(`/api/playlists/${created.id}/items`).send({

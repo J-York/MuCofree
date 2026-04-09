@@ -3,6 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+const DEFAULT_SECURE_COOKIE = process.env.NODE_ENV === "production";
+const DEFAULT_TRUST_PROXY = process.env.NODE_ENV === "production";
+
 function defaultDatabasePath(): string {
   const packageRoot = fileURLToPath(new URL("../", import.meta.url));
   const normalizedPath = path.join(packageRoot, "data", "dev.sqlite");
@@ -24,8 +27,8 @@ const envSchema = z.object({
   QQMUSIC_BASE_URL: z.string().url().default("https://api.ygking.top"),
   CORS_ORIGIN: z.string().default("http://127.0.0.1:5173"),
   SESSION_SECRET: z.string().min(16),
-  SECURE_COOKIE: z.coerce.boolean().default(false),
-  TRUST_PROXY: z.coerce.boolean().default(false)
+  SECURE_COOKIE: z.coerce.boolean().default(DEFAULT_SECURE_COOKIE),
+  TRUST_PROXY: z.coerce.boolean().default(DEFAULT_TRUST_PROXY)
 });
 
 export type Env = z.infer<typeof envSchema>;
