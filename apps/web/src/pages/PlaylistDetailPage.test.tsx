@@ -160,9 +160,13 @@ beforeEach(() => {
   });
   apiMocks.apiUserShares.mockResolvedValue({
     shares: [{ id: 9, songMid: "song-1" }],
+    total: 1,
+    nextCursor: null,
   });
   apiMocks.apiUserPlaylistShares.mockResolvedValue({
     shares: [],
+    total: 0,
+    nextCursor: null,
   });
   apiMocks.apiCreateShare.mockResolvedValue({
     share: { id: 10, userId: 7, songMid: "song-2", comment: "今晚单曲循环" },
@@ -232,6 +236,49 @@ describe("PlaylistDetailPage", () => {
     expect(resetPlazaPageCacheMock).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("已将歌单《我的收藏》发布到主页和广场")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "已分享歌单" })).toBeDisabled();
+  });
+
+  it("loads shared state across paginated share responses", async () => {
+    apiMocks.apiUserShares
+      .mockResolvedValueOnce({
+        shares: Array.from({ length: 50 }, (_, index) => ({
+          id: index + 100,
+          songMid: index === 0 ? "song-1" : `other-song-${index}`,
+        })),
+        total: 51,
+        nextCursor: 150,
+      })
+      .mockResolvedValueOnce({
+        shares: [{ id: 99, songMid: "song-2" }],
+        total: 51,
+        nextCursor: null,
+      });
+    apiMocks.apiUserPlaylistShares
+      .mockResolvedValueOnce({
+        shares: Array.from({ length: 50 }, (_, index) => ({
+          id: index + 300,
+          playlistId: `other-playlist-${index}`,
+        })),
+        total: 51,
+        nextCursor: 350,
+      })
+      .mockResolvedValueOnce({
+        shares: [{ id: 299, playlistId: "playlist-1" }],
+        total: 51,
+        nextCursor: null,
+      });
+
+    renderPage();
+
+    expect(await screen.findByText("Song One")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "已分享" })).toHaveLength(2);
+      expect(screen.getByRole("button", { name: "已分享歌单" })).toBeDisabled();
+    });
+    expect(apiMocks.apiUserShares).toHaveBeenNthCalledWith(1, 7, null, 50);
+    expect(apiMocks.apiUserShares).toHaveBeenNthCalledWith(2, 7, 150, 50);
+    expect(apiMocks.apiUserPlaylistShares).toHaveBeenNthCalledWith(1, 7, null, 50);
+    expect(apiMocks.apiUserPlaylistShares).toHaveBeenNthCalledWith(2, 7, 350, 50);
   });
 
   it("hides song share actions for viewers", async () => {

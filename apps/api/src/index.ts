@@ -672,19 +672,50 @@ function dbShareUsersCount(db: Db): number {
   return row.n;
 }
 
-function dbUserShares(db: Db, userId: number): ShareRow[] {
-  return db.prepare("SELECT * FROM shares WHERE user_id = ? ORDER BY created_at DESC").all(userId) as ShareRow[];
+function dbUserShares(db: Db, userId: number, limit: number, cursor: number | null): ShareRow[] {
+  const sql = cursor
+    ? "SELECT * FROM shares WHERE user_id = ? AND id < ? ORDER BY id DESC LIMIT ?"
+    : "SELECT * FROM shares WHERE user_id = ? ORDER BY id DESC LIMIT ?";
+  return cursor
+    ? (db.prepare(sql).all(userId, cursor, limit) as ShareRow[])
+    : (db.prepare(sql).all(userId, limit) as ShareRow[]);
 }
 
-function dbUserPlaylistShares(db: Db, userId: number): PlaylistShareRow[] {
+function dbUserSharesCount(db: Db, userId: number): number {
+  const row = db.prepare(
+    "SELECT COUNT(*) AS n FROM shares WHERE user_id = ?"
+  ).get(userId) as { n: number };
+  return row.n;
+}
+
+function dbUserPlaylistShares(db: Db, userId: number, limit: number, cursor: number | null): PlaylistShareRow[] {
   const playlistShareJoin = activePlaylistShareJoinSql();
-  return db.prepare(
-    `SELECT ps.*
+  const sql = cursor
+    ? `SELECT ps.*
+       FROM playlist_shares ps
+       ${playlistShareJoin}
+       WHERE ps.user_id = ? AND ps.id < ?
+       ORDER BY ps.id DESC LIMIT ?`
+    : `SELECT ps.*
+       FROM playlist_shares ps
+       ${playlistShareJoin}
+       WHERE ps.user_id = ?
+       ORDER BY ps.id DESC LIMIT ?`;
+
+  return cursor
+    ? (db.prepare(sql).all(userId, cursor, limit) as PlaylistShareRow[])
+    : (db.prepare(sql).all(userId, limit) as PlaylistShareRow[]);
+}
+
+function dbUserPlaylistSharesCount(db: Db, userId: number): number {
+  const playlistShareJoin = activePlaylistShareJoinSql();
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n
      FROM playlist_shares ps
      ${playlistShareJoin}
-     WHERE ps.user_id = ?
-     ORDER BY ps.created_at DESC`
-  ).all(userId) as PlaylistShareRow[];
+     WHERE ps.user_id = ?`
+  ).get(userId) as { n: number };
+  return row.n;
 }
 
 function dbGetDefaultPlaylist(db: Db, userId: number): PlaylistRow | undefined {
@@ -1292,7 +1323,15 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const userId = parseIntParam(req.params.userId);
       const user = dbGetUserById(db, userId);
       if (!user) throw httpError(404, "User not found");
-      const rows = dbUserShares(db, userId);
+      
+      const query = z
+        .object({
+          limit: z.coerce.number().int().positive().max(50).default(20),
+          cursor: z.coerce.number().int().positive().optional(),
+        })
+        .parse(req.query);
+
+      const rows = dbUserShares(db, userId, query.limit, query.cursor ?? null);
       const shareIds = rows.map((row) => row.id);
       const { reactionCountsByShareId, viewerReactionKeyByShareId } = dbShareReactionState(
         db,
@@ -1300,14 +1339,20 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         req.session.userId,
       );
 
-      res.json({
-        shares: rows.map((row) =>
-          mapShareWithReactions(
-            row,
-            reactionCountsByShareId.get(row.id) ?? createEmptyReactionCounts(),
-            viewerReactionKeyByShareId.get(row.id) ?? null,
-          ),
+      const shares = rows.map((row) =>
+        mapShareWithReactions(
+          row,
+          reactionCountsByShareId.get(row.id) ?? createEmptyReactionCounts(),
+          viewerReactionKeyByShareId.get(row.id) ?? null,
         ),
+      );
+      const total = dbUserSharesCount(db, userId);
+      const nextCursor = rows.length === query.limit ? rows[rows.length - 1]!.id : null;
+
+      res.json({
+        shares,
+        total,
+        nextCursor,
       });
     } catch (e) {
       next(e);
@@ -1320,9 +1365,21 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const user = dbGetUserById(db, userId);
       if (!user) throw httpError(404, "User not found");
 
-      const rows = dbUserPlaylistShares(db, userId);
+      const query = z
+        .object({
+          limit: z.coerce.number().int().positive().max(50).default(20),
+          cursor: z.coerce.number().int().positive().optional(),
+        })
+        .parse(req.query);
+
+      const rows = dbUserPlaylistShares(db, userId, query.limit, query.cursor ?? null);
+      const total = dbUserPlaylistSharesCount(db, userId);
+      const nextCursor = rows.length === query.limit ? rows[rows.length - 1]!.id : null;
+
       res.json({
         shares: rows.map(mapPlaylistShare),
+        total,
+        nextCursor,
       });
     } catch (e) {
       next(e);
@@ -2534,7 +2591,9 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
          WHERE p.owner_user_id = ?
            AND p.archived_at IS NULL`
       ).all(userId) as Array<{ song_mid: string; singer_name: string | null }>;
-      const userShares = dbUserShares(db, userId);
+      const userShares = db.prepare(
+        "SELECT * FROM shares WHERE user_id = ? ORDER BY id DESC"
+      ).all(userId) as ShareRow[];
       const ownedMids = new Set<string>([
         ...userPlaylistItems.map((song) => song.song_mid),
         ...userShares.map((song) => song.song_mid),

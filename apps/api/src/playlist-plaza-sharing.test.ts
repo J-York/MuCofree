@@ -120,6 +120,7 @@ describe("playlist plaza sharing api", () => {
     const userSharesResponse = await viewerAgent.get(`/api/users/${owner.id}/playlist-shares`);
     expect(userSharesResponse.status).toBe(200);
     expect(userSharesResponse.body.shares).toHaveLength(1);
+    expect(userSharesResponse.body.total).toBe(1);
 
     const statsResponse = await request(app).get("/api/plaza/stats");
     expect(statsResponse.status).toBe(200);
@@ -197,6 +198,7 @@ describe("playlist plaza sharing api", () => {
     const userSharesAfterDelete = await ownerAgent.get(`/api/users/${owner.id}/playlist-shares`);
     expect(userSharesAfterDelete.status).toBe(200);
     expect(userSharesAfterDelete.body.shares).toHaveLength(0);
+    expect(userSharesAfterDelete.body.total).toBe(0);
 
     const resolveAfterDelete = await viewerAgent.get(`/api/playlists/share/${token}`);
     expect(resolveAfterDelete.status).toBe(410);
@@ -224,6 +226,7 @@ describe("playlist plaza sharing api", () => {
     const userSharesResponse = await ownerAgent.get(`/api/users/${owner.id}/playlist-shares`);
     expect(userSharesResponse.status).toBe(200);
     expect(userSharesResponse.body.shares).toHaveLength(0);
+    expect(userSharesResponse.body.total).toBe(0);
 
     const statsResponse = await request(app).get("/api/plaza/stats");
     expect(statsResponse.status).toBe(200);

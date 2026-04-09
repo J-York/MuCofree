@@ -36,7 +36,17 @@ export default function UserPage() {
 
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [shares, setShares] = useState<Share[]>([]);
+  const [shareTotal, setShareTotal] = useState(0);
+  const [sharesCursor, setSharesCursor] = useState<number | null>(null);
+  const [sharesHasMore, setSharesHasMore] = useState(false);
+  const [sharesLoading, setSharesLoading] = useState(false);
+
   const [playlistShares, setPlaylistShares] = useState<PlaylistShare[]>([]);
+  const [playlistShareTotal, setPlaylistShareTotal] = useState(0);
+  const [playlistSharesCursor, setPlaylistSharesCursor] = useState<number | null>(null);
+  const [playlistSharesHasMore, setPlaylistSharesHasMore] = useState(false);
+  const [playlistSharesLoading, setPlaylistSharesLoading] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,16 +71,56 @@ export default function UserPage() {
     try {
       const [uRes, sRes, playlistRes] = await Promise.all([
         apiGetUser(userId),
-        apiUserShares(userId),
-        apiUserPlaylistShares(userId),
+        apiUserShares(userId, null, 20),
+        apiUserPlaylistShares(userId, null, 20),
       ]);
       setProfileUser(uRes.user);
+
       setShares(sRes.shares);
+      setShareTotal(sRes.total);
+      setSharesCursor(sRes.nextCursor);
+      setSharesHasMore(sRes.nextCursor !== null);
+
       setPlaylistShares(playlistRes.shares);
+      setPlaylistShareTotal(playlistRes.total);
+      setPlaylistSharesCursor(playlistRes.nextCursor);
+      setPlaylistSharesHasMore(playlistRes.nextCursor !== null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMoreShares() {
+    if (sharesLoading || !sharesHasMore) return;
+    setSharesLoading(true);
+    try {
+      const data = await apiUserShares(userId, sharesCursor, 20);
+      setShares((prev) => [...prev, ...data.shares]);
+      setShareTotal(data.total);
+      setSharesCursor(data.nextCursor);
+      setSharesHasMore(data.nextCursor !== null);
+    } catch (e) {
+      showToast((e as Error).message);
+    } finally {
+      setSharesLoading(false);
+    }
+  }
+
+  async function loadMorePlaylistShares() {
+    if (playlistSharesLoading || !playlistSharesHasMore) return;
+    setPlaylistSharesLoading(true);
+    try {
+      const data = await apiUserPlaylistShares(userId, playlistSharesCursor, 20);
+      setPlaylistShares((prev) => [...prev, ...data.shares]);
+      setPlaylistShareTotal(data.total);
+      setPlaylistSharesCursor(data.nextCursor);
+      setPlaylistSharesHasMore(data.nextCursor !== null);
+    } catch (e) {
+      showToast((e as Error).message);
+    } finally {
+      setPlaylistSharesLoading(false);
     }
   }
 
@@ -84,6 +134,7 @@ export default function UserPage() {
     try {
       await apiDeleteShare(share.id);
       setShares((prev) => prev.filter((s) => s.id !== share.id));
+      setShareTotal((prev) => Math.max(0, prev - 1));
       resetPlazaPageCache();
       showToast("已删除分享");
     } catch (e) {
@@ -96,6 +147,7 @@ export default function UserPage() {
     try {
       await apiDeletePlaylistShare(share.id);
       setPlaylistShares((prev) => prev.filter((item) => item.id !== share.id));
+      setPlaylistShareTotal((prev) => Math.max(0, prev - 1));
       resetPlazaPageCache();
       showToast("已撤回歌单分享");
     } catch (e) {
@@ -226,7 +278,7 @@ export default function UserPage() {
                 {profileUser.name}
               </h1>
               <p className="page-subtitle">
-                共分享了 {shares.length} 首歌曲，{playlistShares.length} 个歌单
+                共分享了 {shareTotal} 首歌曲，{playlistShareTotal} 个歌单
               </p>
             </div>
             {isOwner ? (
@@ -260,7 +312,7 @@ export default function UserPage() {
             <h2 className="heading-serif" style={{ fontSize: 17, margin: 0 }}>
               {isOwner ? "我的" : `${profileUser.name} 的`}歌曲分享
             </h2>
-            <span className="text-xs">{shares.length} 首</span>
+            <span className="text-xs">{shareTotal} 首</span>
           </div>
 
           {shares.length ? (
@@ -313,6 +365,18 @@ export default function UserPage() {
               {isOwner ? <div className="text-xs">去歌单里挑一首歌，点“分享”发布到主页和广场</div> : null}
             </div>
           )}
+
+          {sharesHasMore ? (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => void loadMoreShares()}
+                disabled={sharesLoading}
+              >
+                {sharesLoading ? "加载中…" : "加载更多歌曲分享"}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -322,7 +386,7 @@ export default function UserPage() {
             <h2 className="heading-serif" style={{ fontSize: 17, margin: 0 }}>
               {isOwner ? "我的" : `${profileUser.name} 的`}歌单分享
             </h2>
-            <span className="text-xs">{playlistShares.length} 个</span>
+            <span className="text-xs">{playlistShareTotal} 个</span>
           </div>
 
           {playlistShares.length ? (
@@ -382,6 +446,18 @@ export default function UserPage() {
               {isOwner ? <div className="text-xs">去歌单详情页点击“分享到广场”，发布整张歌单</div> : null}
             </div>
           )}
+
+          {playlistSharesHasMore ? (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => void loadMorePlaylistShares()}
+                disabled={playlistSharesLoading}
+              >
+                {playlistSharesLoading ? "加载中…" : "加载更多歌单分享"}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

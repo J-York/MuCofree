@@ -40,6 +40,8 @@ import SortableSongItem from "../components/SortableSongItem";
 import { resetPlazaPageCache } from "./PlazaPage";
 import { safeUrl } from "../utils";
 
+const SHARE_STATE_PAGE_SIZE = 50;
+
 export default function PlaylistDetailPage() {
   const { playlistId } = useParams<{ playlistId: string }>();
   const navigate = useNavigate();
@@ -48,7 +50,8 @@ export default function PlaylistDetailPage() {
   const { play, removeFromPlaylistQueue, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
 
   const [playlist, setPlaylist] = useState<PlaylistSummary | null>(null);
-  const [items, setItems] = useState<PlaylistItem[]>([]);
+  const [allItems, setAllItems] = useState<PlaylistItem[]>([]);
+  const [displayCount, setDisplayCount] = useState(50);
   const [members, setMembers] = useState<PlaylistMember[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -90,7 +93,8 @@ export default function PlaylistDetailPage() {
     setItemsError(null);
     try {
       const data = await apiGetPlaylistItems(id, 0, 500);
-      setItems(data.items);
+      setAllItems(data.items);
+      setDisplayCount(50); // Reset display count on reload
       // Keep revision in sync
       setPlaylist((prev) =>
         prev ? { ...prev, revision: data.revision, itemCount: data.total } : prev,
@@ -122,12 +126,36 @@ export default function PlaylistDetailPage() {
 
   const loadMyShareState = useCallback(async (userId: number) => {
     try {
-      const [songData, playlistData] = await Promise.all([
-        apiUserShares(userId),
-        apiUserPlaylistShares(userId),
+      async function loadSharedSongMids() {
+        const mids = new Set<string>();
+        let cursor: number | null = null;
+
+        while (true) {
+          const data = await apiUserShares(userId, cursor, SHARE_STATE_PAGE_SIZE);
+          data.shares.forEach((share) => mids.add(share.songMid));
+          if (data.nextCursor == null) return mids;
+          cursor = data.nextCursor;
+        }
+      }
+
+      async function loadSharedPlaylistIds() {
+        const ids = new Set<string>();
+        let cursor: number | null = null;
+
+        while (true) {
+          const data = await apiUserPlaylistShares(userId, cursor, SHARE_STATE_PAGE_SIZE);
+          data.shares.forEach((share) => ids.add(share.playlistId));
+          if (data.nextCursor == null) return ids;
+          cursor = data.nextCursor;
+        }
+      }
+
+      const [songMids, playlistIds] = await Promise.all([
+        loadSharedSongMids(),
+        loadSharedPlaylistIds(),
       ]);
-      setSharedSongMids(new Set(songData.shares.map((share) => share.songMid)));
-      setSharedPlaylistIds(new Set(playlistData.shares.map((share) => share.playlistId)));
+      setSharedSongMids(songMids);
+      setSharedPlaylistIds(playlistIds);
     } catch {
       // Non-blocking for playlist browsing; duplicate share attempts are still rejected server-side.
     }
@@ -163,7 +191,7 @@ export default function PlaylistDetailPage() {
     playlist.status === "active" &&
     (playlist.role === "owner" || playlist.role === "editor"),
   );
-  const playlistCoverUrl = items.find((item) => safeUrl(item.coverUrl))?.coverUrl ?? null;
+  const playlistCoverUrl = allItems.find((item) => safeUrl(item.coverUrl))?.coverUrl ?? null;
 
   // ── Business logic ────────────────────────────────────────────────────
 
@@ -173,7 +201,7 @@ export default function PlaylistDetailPage() {
     try {
       const result = await apiRemovePlaylistItem(playlist.id, songMid, playlist.revision);
       removeFromPlaylistQueue(songMid, playlist.id);
-      setItems((prev) => prev.filter((song) => song.songMid !== songMid));
+      setAllItems((prev) => prev.filter((song) => song.songMid !== songMid));
       if (shareDraftItem?.songMid === songMid) {
         setShareDraftItem(null);
         setShareComment("");
@@ -205,32 +233,32 @@ export default function PlaylistDetailPage() {
       const { active, over } = event;
       if (!over || active.id === over.id || !playlist || reordering) return;
 
-      const oldIndex = items.findIndex((s) => s.songMid === active.id);
-      const newIndex = items.findIndex((s) => s.songMid === over.id);
+      const oldIndex = allItems.findIndex((s) => s.songMid === active.id);
+      const newIndex = allItems.findIndex((s) => s.songMid === over.id);
       if (oldIndex === -1 || newIndex === -1) return;
 
-      const reordered = arrayMove(items, oldIndex, newIndex);
-      setItems(reordered);
+      const reordered = arrayMove(allItems, oldIndex, newIndex);
+      setAllItems(reordered);
 
       const songMids = reordered.map((s) => s.songMid);
       setReordering(true);
       try {
         const result = await apiReorderPlaylistItems(playlist.id, songMids, playlist.revision);
-        setItems(result.items);
+        setAllItems(result.items);
         setPlaylist((prev) => (prev ? { ...prev, revision: result.revision } : prev));
       } catch (e) {
         const message = (e as Error).message;
         if (message === "Playlist revision conflict") {
           await reloadAll(playlist.id);
         } else {
-          setItems(items);
+          setAllItems(allItems);
         }
         showToast(message);
       } finally {
         setReordering(false);
       }
     },
-    [items, playlist, reordering, reloadAll],
+    [allItems, playlist, reordering, reloadAll],
   );
 
   async function renamePlaylist() {
@@ -507,7 +535,7 @@ export default function PlaylistDetailPage() {
   }
 
   function playPlaylistSong(song: PlayerSong) {
-    const queue = items.map((item) => ({
+    const queue = allItems.map((item) => ({
       mid: item.songMid,
       title: item.songTitle ?? item.songMid,
       singer: item.singerName ?? undefined,
@@ -518,6 +546,8 @@ export default function PlaylistDetailPage() {
   }
 
   // ── Render ────────────────────────────────────────────────────────────
+
+  const displayedItems = allItems.slice(0, displayCount);
 
   if (pageError) {
     return (
@@ -792,18 +822,19 @@ export default function PlaylistDetailPage() {
           <div className="empty-state">
             <div className="spinner" />
           </div>
-        ) : items.length ? (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={(e) => void handleDragEnd(e)}
-          >
-            <SortableContext
-              items={items.map((s) => s.songMid)}
-              strategy={verticalListSortingStrategy}
+        ) : displayedItems.length ? (
+          <>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={(e) => void handleDragEnd(e)}
             >
-              <div className="stack-sm">
-                {items.map((song) => (
+              <SortableContext
+                items={displayedItems.map((s) => s.songMid)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="stack-sm">
+                  {displayedItems.map((song) => (
                   <SortableSongItem
                     key={song.songMid}
                     id={song.songMid}
@@ -837,6 +868,18 @@ export default function PlaylistDetailPage() {
               </div>
             </SortableContext>
           </DndContext>
+          
+          {allItems.length > displayCount ? (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDisplayCount((prev) => prev + 50)}
+              >
+                加载更多（已显示 {displayCount} / {allItems.length}）
+              </button>
+            </div>
+          ) : null}
+          </>
         ) : (
           <div className="empty-state">
             <div className="empty-icon">🎵</div>

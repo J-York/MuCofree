@@ -144,9 +144,13 @@ beforeEach(() => {
         viewerReactionKey: null,
       },
     ],
+    total: 1,
+    nextCursor: null,
   });
   apiMocks.apiUserPlaylistShares.mockResolvedValue({
     shares: [],
+    total: 0,
+    nextCursor: null,
   });
 
   apiMocks.apiDeleteShare.mockResolvedValue({ ok: true });
@@ -188,6 +192,8 @@ describe("UserPage", () => {
           createdAt: "2026-01-01T00:00:00.000Z",
         },
       ],
+      total: 1,
+      nextCursor: null,
     });
 
     renderPage();
@@ -200,5 +206,40 @@ describe("UserPage", () => {
       expect(apiMocks.apiDeletePlaylistShare).toHaveBeenCalledWith(51);
       expect(plazaPageMocks.resetPlazaPageCache).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("shows total counts from paginated responses", async () => {
+    apiMocks.apiUserShares.mockResolvedValue({
+      shares: [
+        {
+          id: 42,
+          userId: 7,
+          songMid: "song-1",
+          songTitle: "Song To Delete",
+          songSubtitle: null,
+          singerName: "Singer",
+          albumMid: null,
+          albumName: null,
+          coverUrl: null,
+          comment: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          reactionCounts: { slacking: 0, boost: 0, healing: 0, after_work: 0, loop: 0 },
+          viewerReactionKey: null,
+        },
+      ],
+      total: 3,
+      nextCursor: 41,
+    });
+    apiMocks.apiUserPlaylistShares.mockResolvedValue({
+      shares: [],
+      total: 2,
+      nextCursor: 11,
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("共分享了 3 首歌曲，2 个歌单")).toBeInTheDocument();
+    expect(screen.getByText("3 首")).toBeInTheDocument();
+    expect(screen.getByText("2 个")).toBeInTheDocument();
   });
 });

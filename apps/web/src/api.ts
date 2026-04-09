@@ -288,7 +288,7 @@ export async function apiHome(): Promise<HomeResponse> {
 export async function apiSharesFeed(cursor?: number | null, limit = 20): Promise<FeedResponse> {
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
-  if (cursor) sp.set("cursor", String(cursor));
+  if (cursor != null) sp.set("cursor", String(cursor));
   const res = await fetch(`/api/shares/feed?${sp.toString()}`, { method: "GET", credentials: "include" });
   return readJson<FeedResponse>(res);
 }
@@ -299,7 +299,7 @@ export async function apiPlaylistSharesFeed(
 ): Promise<PlaylistSharesFeedResponse> {
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
-  if (cursor) sp.set("cursor", String(cursor));
+  if (cursor != null) sp.set("cursor", String(cursor));
   const res = await fetch(`/api/playlist-shares/feed?${sp.toString()}`, {
     method: "GET",
     credentials: "include",
@@ -325,17 +325,35 @@ export async function apiGetUser(userId: number): Promise<{ user: User }> {
   return readJson<{ user: User }>(res);
 }
 
-export async function apiUserShares(userId: number): Promise<{ shares: Share[] }> {
-  const res = await fetch(`/api/users/${userId}/shares`, { method: "GET", credentials: "include" });
-  return readJson<{ shares: Share[] }>(res);
+export type UserSharesResponse = {
+  shares: Share[];
+  total: number;
+  nextCursor: number | null;
+};
+
+export async function apiUserShares(userId: number, cursor?: number | null, limit = 20): Promise<UserSharesResponse> {
+  const sp = new URLSearchParams();
+  sp.set("limit", String(limit));
+  if (cursor != null) sp.set("cursor", String(cursor));
+  const res = await fetch(`/api/users/${userId}/shares?${sp.toString()}`, { method: "GET", credentials: "include" });
+  return readJson<UserSharesResponse>(res);
 }
 
-export async function apiUserPlaylistShares(userId: number): Promise<{ shares: PlaylistShare[] }> {
-  const res = await fetch(`/api/users/${userId}/playlist-shares`, {
+export type UserPlaylistSharesResponse = {
+  shares: PlaylistShare[];
+  total: number;
+  nextCursor: number | null;
+};
+
+export async function apiUserPlaylistShares(userId: number, cursor?: number | null, limit = 20): Promise<UserPlaylistSharesResponse> {
+  const sp = new URLSearchParams();
+  sp.set("limit", String(limit));
+  if (cursor != null) sp.set("cursor", String(cursor));
+  const res = await fetch(`/api/users/${userId}/playlist-shares?${sp.toString()}`, {
     method: "GET",
     credentials: "include",
   });
-  return readJson<{ shares: PlaylistShare[] }>(res);
+  return readJson<UserPlaylistSharesResponse>(res);
 }
 
 // ── Shares ────────────────────────────────────────────────────────────────────

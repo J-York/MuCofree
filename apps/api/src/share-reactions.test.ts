@@ -135,6 +135,7 @@ describe("share reactions api", () => {
     const initialUserSharesResponse = await viewerAgent.get(`/api/users/${owner.id}/shares`);
     expect(initialUserSharesResponse.status).toBe(200);
     expect(initialUserSharesResponse.body.shares).toHaveLength(1);
+    expect(initialUserSharesResponse.body.total).toBe(1);
     expect(initialUserSharesResponse.body.shares[0]).toMatchObject({
       id: share.id,
       reactionCounts: createEmptyReactionCounts(),
@@ -166,6 +167,7 @@ describe("share reactions api", () => {
 
     const userSharesAfterSwitchResponse = await viewerAgent.get(`/api/users/${owner.id}/shares`);
     expect(userSharesAfterSwitchResponse.status).toBe(200);
+    expect(userSharesAfterSwitchResponse.body.total).toBe(1);
     expect(userSharesAfterSwitchResponse.body.shares[0]).toMatchObject({
       id: share.id,
       reactionCounts: {
@@ -189,6 +191,7 @@ describe("share reactions api", () => {
 
     const userSharesAfterClearResponse = await viewerAgent.get(`/api/users/${owner.id}/shares`);
     expect(userSharesAfterClearResponse.status).toBe(200);
+    expect(userSharesAfterClearResponse.body.total).toBe(1);
     expect(userSharesAfterClearResponse.body.shares[0]).toMatchObject({
       id: share.id,
       reactionCounts: createEmptyReactionCounts(),
