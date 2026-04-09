@@ -161,6 +161,19 @@ export type PlaylistShareResolveResponse = {
   requiresJoin: boolean;
 };
 
+export type PlaylistShare = {
+  id: number;
+  userId: number;
+  playlistId: string;
+  shareLinkId: number;
+  sharePath: string;
+  playlistName: string;
+  playlistDescription: string | null;
+  coverUrl: string | null;
+  itemCount: number;
+  comment: string | null;
+  createdAt: string;
+};
 
 export type HomeResponse = { users: User[] };
 
@@ -176,6 +189,16 @@ export type FeedResponse = {
   nextCursor: number | null;
 };
 
+export type FeedPlaylistShare = PlaylistShare & {
+  userName: string;
+  userAvatarUrl: string | null;
+};
+
+export type PlaylistSharesFeedResponse = {
+  items: FeedPlaylistShare[];
+  nextCursor: number | null;
+};
+
 export type UserWithPreview = {
   id: number;
   username: string;
@@ -183,8 +206,14 @@ export type UserWithPreview = {
   avatarUrl: string | null;
   createdAt: string;
   shareCount: number;
+  songShareCount: number;
+  playlistShareCount: number;
   latestSongTitle: string | null;
   latestSingerName: string | null;
+  latestPlaylistName: string | null;
+  latestShareKind: "song" | "playlist" | null;
+  latestShareTitle: string | null;
+  latestShareSubtitle: string | null;
   recentCoverUrls: string[];
 };
 
@@ -192,11 +221,15 @@ export type UsersResponse = {
   users: UserWithPreview[];
   total: number;
   totalShares: number;
+  songShares: number;
+  playlistShares: number;
 };
 
 export type PlazaStatsResponse = {
   totalUsers: number;
   totalShares: number;
+  songShares: number;
+  playlistShares: number;
 };
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -260,6 +293,20 @@ export async function apiSharesFeed(cursor?: number | null, limit = 20): Promise
   return readJson<FeedResponse>(res);
 }
 
+export async function apiPlaylistSharesFeed(
+  cursor?: number | null,
+  limit = 20,
+): Promise<PlaylistSharesFeedResponse> {
+  const sp = new URLSearchParams();
+  sp.set("limit", String(limit));
+  if (cursor) sp.set("cursor", String(cursor));
+  const res = await fetch(`/api/playlist-shares/feed?${sp.toString()}`, {
+    method: "GET",
+    credentials: "include",
+  });
+  return readJson<PlaylistSharesFeedResponse>(res);
+}
+
 export async function apiUsersList(offset = 0, limit = 20): Promise<UsersResponse> {
   const sp = new URLSearchParams();
   sp.set("limit", String(limit));
@@ -283,6 +330,14 @@ export async function apiUserShares(userId: number): Promise<{ shares: Share[] }
   return readJson<{ shares: Share[] }>(res);
 }
 
+export async function apiUserPlaylistShares(userId: number): Promise<{ shares: PlaylistShare[] }> {
+  const res = await fetch(`/api/users/${userId}/playlist-shares`, {
+    method: "GET",
+    credentials: "include",
+  });
+  return readJson<{ shares: PlaylistShare[] }>(res);
+}
+
 // ── Shares ────────────────────────────────────────────────────────────────────
 
 export async function apiCreateShare(input: {
@@ -301,6 +356,27 @@ export async function apiCreateShare(input: {
 
 export async function apiDeleteShare(shareId: number): Promise<{ ok: boolean }> {
   const res = await fetch(`/api/shares/${shareId}`, { method: "DELETE", credentials: "include" });
+  return readJson<{ ok: boolean }>(res);
+}
+
+export async function apiCreatePlaylistShare(
+  playlistId: string,
+  input: { comment?: string | null } = {},
+): Promise<{ share: PlaylistShare }> {
+  const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}/shares`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+    credentials: "include",
+  });
+  return readJson<{ share: PlaylistShare }>(res);
+}
+
+export async function apiDeletePlaylistShare(shareId: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/playlist-shares/${shareId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
   return readJson<{ ok: boolean }>(res);
 }
 

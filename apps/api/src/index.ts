@@ -110,6 +110,20 @@ type PlaylistShareLinkRow = {
   created_at: string;
 };
 
+type PlaylistShareRow = {
+  id: number;
+  user_id: number;
+  playlist_id: string;
+  share_link_id: number;
+  share_path: string;
+  playlist_name: string;
+  playlist_description: string | null;
+  cover_url: string | null;
+  item_count: number;
+  comment: string | null;
+  created_at: string;
+};
+
 type PlaylistAccessRow = PlaylistRow & {
   member_role: PlaylistRole;
   member_status: PlaylistMemberStatus;
@@ -190,6 +204,7 @@ function httpError(status: number, message: string, options?: { expose?: boolean
   return err;
 }
 const SHARE_ALREADY_EXISTS_MESSAGE = "这首歌已经分享过了";
+const PLAYLIST_SHARE_ALREADY_EXISTS_MESSAGE = "这个歌单已经分享过了";
 
 function isUniqueConstraintError(err: unknown, constraint: string) {
   if (!(err instanceof Error)) return false;
@@ -358,6 +373,22 @@ function mapPlaylistShareLink(row: PlaylistShareLinkRow) {
   };
 }
 
+function mapPlaylistShare(row: PlaylistShareRow) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    playlistId: row.playlist_id,
+    shareLinkId: row.share_link_id,
+    sharePath: row.share_path,
+    playlistName: row.playlist_name,
+    playlistDescription: row.playlist_description,
+    coverUrl: row.cover_url,
+    itemCount: row.item_count,
+    comment: row.comment,
+    createdAt: row.created_at,
+  };
+}
+
 // ── DB helpers ─────────────────────────────────────────────────────────────
 
 function dbGetUserById(db: Db, id: number): UserRow | undefined {
@@ -374,6 +405,30 @@ function dbGetShare(db: Db, id: number): ShareRow | undefined {
 
 function dbGetUserShareBySongMid(db: Db, userId: number, songMid: string): ShareRow | undefined {
   return db.prepare("SELECT * FROM shares WHERE user_id = ? AND song_mid = ?").get(userId, songMid) as ShareRow | undefined;
+}
+
+function dbGetPlaylistShare(db: Db, id: number): PlaylistShareRow | undefined {
+  return db.prepare("SELECT * FROM playlist_shares WHERE id = ?").get(id) as PlaylistShareRow | undefined;
+}
+
+function dbGetUserPlaylistShareByPlaylistId(db: Db, userId: number, playlistId: string): PlaylistShareRow | undefined {
+  return db.prepare(
+    "SELECT * FROM playlist_shares WHERE user_id = ? AND playlist_id = ?"
+  ).get(userId, playlistId) as PlaylistShareRow | undefined;
+}
+
+function dbGetPlaylistShareCoverUrl(db: Db, playlistId: string): string | null {
+  const row = db.prepare(
+    `SELECT cover_url
+     FROM playlist_items
+     WHERE playlist_id = ?
+       AND cover_url IS NOT NULL
+       AND TRIM(cover_url) != ''
+     ORDER BY position ASC
+     LIMIT 1`
+  ).get(playlistId) as { cover_url: string | null } | undefined;
+
+  return row?.cover_url ?? null;
 }
 
 function dbAllUsers(db: Db): UserRow[] {
@@ -403,35 +458,181 @@ function dbSharesFeed(db: Db, limit: number, cursor: number | null): FeedShareRo
     : (db.prepare(sql).all(limit) as FeedShareRow[]);
 }
 
+type FeedPlaylistShareRow = PlaylistShareRow & {
+  user_name: string;
+  user_avatar_url: string | null;
+};
+
+function dbPlaylistSharesFeed(db: Db, limit: number, cursor: number | null): FeedPlaylistShareRow[] {
+  const playlistShareJoin = activePlaylistShareJoinSql();
+  const sql = cursor
+    ? `SELECT ps.*, u.name AS user_name, u.avatar_url AS user_avatar_url
+       FROM playlist_shares ps
+       JOIN users u ON ps.user_id = u.id
+       ${playlistShareJoin}
+       WHERE ps.id < ?
+       ORDER BY ps.id DESC LIMIT ?`
+    : `SELECT ps.*, u.name AS user_name, u.avatar_url AS user_avatar_url
+       FROM playlist_shares ps
+       JOIN users u ON ps.user_id = u.id
+       ${playlistShareJoin}
+       ORDER BY ps.id DESC LIMIT ?`;
+
+  return cursor
+    ? (db.prepare(sql).all(cursor, limit) as FeedPlaylistShareRow[])
+    : (db.prepare(sql).all(limit) as FeedPlaylistShareRow[]);
+}
+
 type UserWithPreviewRow = UserRow & {
-  share_count: number;
+  song_share_count: number;
+  playlist_share_count: number;
   latest_song_title: string | null;
   latest_singer_name: string | null;
+  latest_playlist_name: string | null;
+  latest_share_kind: "song" | "playlist" | null;
+  latest_share_title: string | null;
+  latest_share_subtitle: string | null;
   cover_urls: string | null;
 };
 
+function activePlaylistShareJoinSql(shareAlias = "ps") {
+  return `JOIN playlists p
+    ON p.id = ${shareAlias}.playlist_id
+   AND p.archived_at IS NULL
+   JOIN playlist_share_links l
+    ON l.id = ${shareAlias}.share_link_id
+   AND l.revoked_at IS NULL
+   AND strftime('%s', l.expires_at) > strftime('%s', 'now')`;
+}
+
 function dbUsersWithPreview(db: Db, limit: number, offset: number): UserWithPreviewRow[] {
+  const playlistShareJoin = activePlaylistShareJoinSql();
   return db.prepare(`
     SELECT
       u.*,
-      COUNT(s.id) AS share_count,
-      MAX(s.song_title) AS latest_song_title,
+      (SELECT COUNT(*) FROM shares WHERE user_id = u.id) AS song_share_count,
+      (
+        SELECT COUNT(*)
+        FROM playlist_shares ps
+        ${playlistShareJoin}
+        WHERE ps.user_id = u.id
+      ) AS playlist_share_count,
+      (SELECT song_title FROM shares WHERE user_id = u.id ORDER BY id DESC LIMIT 1) AS latest_song_title,
       (SELECT singer_name FROM shares WHERE user_id = u.id ORDER BY id DESC LIMIT 1) AS latest_singer_name,
       (
+        SELECT ps.playlist_name
+        FROM playlist_shares ps
+        ${playlistShareJoin}
+        WHERE ps.user_id = u.id
+        ORDER BY ps.id DESC
+        LIMIT 1
+      ) AS latest_playlist_name,
+      (
+        SELECT latest.kind
+        FROM (
+          SELECT
+            'song' AS kind,
+            COALESCE(s.song_title, s.song_mid) AS title,
+            s.singer_name AS subtitle,
+            s.created_at AS created_at,
+            s.id AS sort_id
+          FROM shares s
+          WHERE s.user_id = u.id
+          UNION ALL
+          SELECT
+            'playlist' AS kind,
+            ps.playlist_name AS title,
+            NULL AS subtitle,
+            ps.created_at AS created_at,
+            ps.id AS sort_id
+          FROM playlist_shares ps
+          ${playlistShareJoin}
+          WHERE ps.user_id = u.id
+        ) latest
+        ORDER BY latest.created_at DESC, latest.sort_id DESC
+        LIMIT 1
+      ) AS latest_share_kind,
+      (
+        SELECT latest.title
+        FROM (
+          SELECT
+            COALESCE(s.song_title, s.song_mid) AS title,
+            s.created_at AS created_at,
+            s.id AS sort_id
+          FROM shares s
+          WHERE s.user_id = u.id
+          UNION ALL
+          SELECT
+            ps.playlist_name AS title,
+            ps.created_at AS created_at,
+            ps.id AS sort_id
+          FROM playlist_shares ps
+          ${playlistShareJoin}
+          WHERE ps.user_id = u.id
+        ) latest
+        ORDER BY latest.created_at DESC, latest.sort_id DESC
+        LIMIT 1
+      ) AS latest_share_title,
+      (
+        SELECT latest.subtitle
+        FROM (
+          SELECT
+            s.singer_name AS subtitle,
+            s.created_at AS created_at,
+            s.id AS sort_id
+          FROM shares s
+          WHERE s.user_id = u.id
+          UNION ALL
+          SELECT
+            NULL AS subtitle,
+            ps.created_at AS created_at,
+            ps.id AS sort_id
+          FROM playlist_shares ps
+          ${playlistShareJoin}
+          WHERE ps.user_id = u.id
+        ) latest
+        ORDER BY latest.created_at DESC, latest.sort_id DESC
+        LIMIT 1
+      ) AS latest_share_subtitle,
+      (
         SELECT GROUP_CONCAT(cover_url, '||')
-        FROM (SELECT cover_url FROM shares WHERE user_id = u.id ORDER BY id DESC LIMIT 3)
+        FROM (
+          SELECT latest.cover_url
+          FROM (
+            SELECT
+              s.cover_url AS cover_url,
+              s.created_at AS created_at,
+              s.id AS sort_id
+            FROM shares s
+            WHERE s.user_id = u.id
+              AND s.cover_url IS NOT NULL
+              AND TRIM(s.cover_url) != ''
+            UNION ALL
+            SELECT
+              ps.cover_url AS cover_url,
+              ps.created_at AS created_at,
+              ps.id AS sort_id
+            FROM playlist_shares ps
+            ${playlistShareJoin}
+            WHERE ps.user_id = u.id
+              AND ps.cover_url IS NOT NULL
+              AND TRIM(ps.cover_url) != ''
+          ) latest
+          ORDER BY latest.created_at DESC, latest.sort_id DESC
+          LIMIT 3
+        )
       ) AS cover_urls
     FROM users u
-    LEFT JOIN shares s ON s.user_id = u.id
-    GROUP BY u.id
+    WHERE EXISTS (SELECT 1 FROM shares WHERE user_id = u.id)
+       OR EXISTS (
+         SELECT 1
+         FROM playlist_shares ps
+         ${playlistShareJoin}
+         WHERE ps.user_id = u.id
+       )
     ORDER BY u.id DESC
     LIMIT ? OFFSET ?
   `).all(limit, offset) as UserWithPreviewRow[];
-}
-
-function dbUsersCount(db: Db): number {
-  const row = db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number };
-  return row.n;
 }
 
 function dbSharesCount(db: Db): number {
@@ -439,8 +640,51 @@ function dbSharesCount(db: Db): number {
   return row.n;
 }
 
+function dbPlaylistSharesCount(db: Db): number {
+  const playlistShareJoin = activePlaylistShareJoinSql();
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM playlist_shares ps
+     ${playlistShareJoin}`
+  ).get() as { n: number };
+
+  return row.n;
+}
+
+function dbTotalSharesCount(db: Db): number {
+  return dbSharesCount(db) + dbPlaylistSharesCount(db);
+}
+
+function dbShareUsersCount(db: Db): number {
+  const playlistShareJoin = activePlaylistShareJoinSql();
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n
+     FROM (
+       SELECT user_id
+       FROM shares
+       UNION
+       SELECT ps.user_id
+       FROM playlist_shares ps
+       ${playlistShareJoin}
+     ) share_users`
+  ).get() as { n: number };
+
+  return row.n;
+}
+
 function dbUserShares(db: Db, userId: number): ShareRow[] {
   return db.prepare("SELECT * FROM shares WHERE user_id = ? ORDER BY created_at DESC").all(userId) as ShareRow[];
+}
+
+function dbUserPlaylistShares(db: Db, userId: number): PlaylistShareRow[] {
+  const playlistShareJoin = activePlaylistShareJoinSql();
+  return db.prepare(
+    `SELECT ps.*
+     FROM playlist_shares ps
+     ${playlistShareJoin}
+     WHERE ps.user_id = ?
+     ORDER BY ps.created_at DESC`
+  ).all(userId) as PlaylistShareRow[];
 }
 
 function dbGetDefaultPlaylist(db: Db, userId: number): PlaylistRow | undefined {
@@ -973,6 +1217,76 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
     }
   });
 
+  app.post("/api/playlists/:playlistId/shares", requireAuth, (req, res, next) => {
+    try {
+      const userId = req.session.userId!;
+      const playlistId = parsePlaylistIdParam(req.params.playlistId);
+      const body = z
+        .object({
+          comment: z.string().trim().max(200).optional().nullable(),
+        })
+        .parse(req.body);
+
+      const createPlaylistShare = db.transaction(() => {
+        const access = authorizePlaylistAccess(db, userId, playlistId, "owner");
+        const itemCount = dbPlaylistItemsCount(db, playlistId);
+        if (itemCount <= 0) throw httpError(400, "空歌单暂时还不能分享到广场");
+
+        const existingShare = dbGetUserPlaylistShareByPlaylistId(db, userId, playlistId);
+        if (existingShare) throw httpError(409, PLAYLIST_SHARE_ALREADY_EXISTS_MESSAGE);
+
+        const token = createShareToken();
+        const tokenHash = hashShareToken(token);
+        const sharePath = `/playlist/share/${encodeURIComponent(token)}`;
+        const expiresAt = new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000).toISOString();
+        const coverUrl = dbGetPlaylistShareCoverUrl(db, playlistId);
+
+        const linkInfo = db.prepare(
+          `INSERT INTO playlist_share_links (playlist_id, token_hash, scope, expires_at, max_uses, created_by_user_id)
+           VALUES (?, ?, 'read', ?, NULL, ?)`
+        ).run(playlistId, tokenHash, expiresAt, userId);
+
+        const shareInfo = db.prepare(
+          `INSERT INTO playlist_shares (
+             user_id,
+             playlist_id,
+             share_link_id,
+             share_path,
+             playlist_name,
+             playlist_description,
+             cover_url,
+             item_count,
+             comment
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          userId,
+          playlistId,
+          Number(linkInfo.lastInsertRowid),
+          sharePath,
+          access.name,
+          access.description ?? null,
+          coverUrl,
+          itemCount,
+          body.comment ?? null,
+        );
+
+        const share = dbGetPlaylistShare(db, Number(shareInfo.lastInsertRowid));
+        if (!share) throw httpError(500, "Failed to create playlist share");
+        return share;
+      });
+
+      const share = createPlaylistShare();
+      res.status(201).json({ share: mapPlaylistShare(share) });
+    } catch (e) {
+      if (isUniqueConstraintError(e, "playlist_shares.user_id, playlist_shares.playlist_id")) {
+        next(httpError(409, PLAYLIST_SHARE_ALREADY_EXISTS_MESSAGE));
+        return;
+      }
+      next(e);
+    }
+  });
+
   app.get("/api/users/:userId/shares", (req, res, next) => {
     try {
       const userId = parseIntParam(req.params.userId);
@@ -994,6 +1308,21 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
             viewerReactionKeyByShareId.get(row.id) ?? null,
           ),
         ),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.get("/api/users/:userId/playlist-shares", (req, res, next) => {
+    try {
+      const userId = parseIntParam(req.params.userId);
+      const user = dbGetUserById(db, userId);
+      if (!user) throw httpError(404, "User not found");
+
+      const rows = dbUserPlaylistShares(db, userId);
+      res.json({
+        shares: rows.map(mapPlaylistShare),
       });
     } catch (e) {
       next(e);
@@ -1054,6 +1383,29 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
     }
   });
 
+  app.delete("/api/playlist-shares/:shareId", requireAuth, (req, res, next) => {
+    try {
+      const shareId = parseIntParam(req.params.shareId);
+      const share = dbGetPlaylistShare(db, shareId);
+      if (!share) throw httpError(404, "Playlist share not found");
+      if (share.user_id !== req.session.userId) throw httpError(403, "Forbidden");
+
+      const deletePlaylistShare = db.transaction(() => {
+        db.prepare(
+          `UPDATE playlist_share_links
+           SET revoked_at = COALESCE(revoked_at, datetime('now'))
+           WHERE id = ?`
+        ).run(share.share_link_id);
+        db.prepare("DELETE FROM playlist_shares WHERE id = ?").run(shareId);
+      });
+
+      deletePlaylistShare();
+      res.json({ ok: true });
+    } catch (e) {
+      next(e);
+    }
+  });
+
   // ── Home feed ────────────────────────────────────────────────────────────
 
   app.get("/api/home", (_req, res) => {
@@ -1077,9 +1429,11 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
 
   app.get("/api/plaza/stats", (_req, res, next) => {
     try {
-      const totalUsers = dbUsersCount(db);
-      const totalShares = dbSharesCount(db);
-      res.json({ totalUsers, totalShares });
+      const totalUsers = dbShareUsersCount(db);
+      const songShares = dbSharesCount(db);
+      const playlistShares = dbPlaylistSharesCount(db);
+      const totalShares = dbTotalSharesCount(db);
+      res.json({ totalUsers, totalShares, songShares, playlistShares });
     } catch (e) {
       next(e);
     }
@@ -1121,6 +1475,30 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
     }
   });
 
+  app.get("/api/playlist-shares/feed", (req, res, next) => {
+    try {
+      const query = z
+        .object({
+          limit: z.coerce.number().int().positive().max(50).default(20),
+          cursor: z.coerce.number().int().positive().optional()
+        })
+        .parse(req.query);
+
+      const rows = dbPlaylistSharesFeed(db, query.limit, query.cursor ?? null);
+      const items = rows.map((row) => ({
+        ...mapPlaylistShare(row),
+        userName: row.user_name,
+        userAvatarUrl: row.user_avatar_url,
+      }));
+
+      const nextCursor = rows.length === query.limit ? rows[rows.length - 1]!.id : null;
+
+      res.json({ items, nextCursor });
+    } catch (e) {
+      next(e);
+    }
+  });
+
   // ── Users list (paginated) ────────────────────────────────────────────────
 
   app.get("/api/users", (req, res, next) => {
@@ -1133,20 +1511,28 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         .parse(req.query);
 
       const rows = dbUsersWithPreview(db, query.limit, query.offset);
-      const total = dbUsersCount(db);
-      const totalShares = dbSharesCount(db);
+      const total = dbShareUsersCount(db);
+      const songShares = dbSharesCount(db);
+      const playlistShares = dbPlaylistSharesCount(db);
+      const totalShares = dbTotalSharesCount(db);
 
       const users = rows.map((row) => ({
         ...mapUser(row),
-        shareCount: row.share_count,
+        shareCount: row.song_share_count + row.playlist_share_count,
+        songShareCount: row.song_share_count,
+        playlistShareCount: row.playlist_share_count,
         latestSongTitle: row.latest_song_title,
         latestSingerName: row.latest_singer_name,
+        latestPlaylistName: row.latest_playlist_name,
+        latestShareKind: row.latest_share_kind,
+        latestShareTitle: row.latest_share_title,
+        latestShareSubtitle: row.latest_share_subtitle,
         recentCoverUrls: row.cover_urls
           ? row.cover_urls.split("||").filter(Boolean)
           : []
       }));
 
-      res.json({ users, total, totalShares });
+      res.json({ users, total, totalShares, songShares, playlistShares });
     } catch (e) {
       next(e);
     }
@@ -1340,6 +1726,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
            SET revoked_at = COALESCE(revoked_at, datetime('now'))
            WHERE playlist_id = ?`
         ).run(playlistId);
+        db.prepare("DELETE FROM playlist_shares WHERE playlist_id = ?").run(playlistId);
       });
 
       archivePlaylist();
@@ -1858,6 +2245,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
          SET revoked_at = COALESCE(revoked_at, datetime('now'))
          WHERE id = ?`
       ).run(linkId);
+      db.prepare("DELETE FROM playlist_shares WHERE share_link_id = ?").run(linkId);
 
       res.json({ ok: true });
     } catch (e) {

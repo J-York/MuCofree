@@ -9,8 +9,10 @@ import PlazaPage, { resetPlazaPageCache } from "./PlazaPage";
 const apiMocks = vi.hoisted(() => ({
   apiAddSongToDefaultPlaylist: vi.fn(),
   apiDeleteShare: vi.fn(),
+  apiDeletePlaylistShare: vi.fn(),
   apiDeleteShareReaction: vi.fn(),
   apiPlazaStats: vi.fn(),
+  apiPlaylistSharesFeed: vi.fn(),
   apiSetShareReaction: vi.fn(),
   apiSharesFeed: vi.fn(),
   apiUsersList: vi.fn(),
@@ -31,8 +33,10 @@ const authState = vi.hoisted(() => ({
 vi.mock("../api", () => ({
   apiAddSongToDefaultPlaylist: apiMocks.apiAddSongToDefaultPlaylist,
   apiDeleteShare: apiMocks.apiDeleteShare,
+  apiDeletePlaylistShare: apiMocks.apiDeletePlaylistShare,
   apiDeleteShareReaction: apiMocks.apiDeleteShareReaction,
   apiPlazaStats: apiMocks.apiPlazaStats,
+  apiPlaylistSharesFeed: apiMocks.apiPlaylistSharesFeed,
   apiSetShareReaction: apiMocks.apiSetShareReaction,
   apiSharesFeed: apiMocks.apiSharesFeed,
   apiUsersList: apiMocks.apiUsersList,
@@ -92,8 +96,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetPlazaPageCache();
   authState.currentUser = null;
+  vi.stubGlobal("confirm", vi.fn(() => true));
 
   apiMocks.apiSharesFeed.mockResolvedValue({
+    items: [],
+    nextCursor: null,
+  });
+
+  apiMocks.apiPlaylistSharesFeed.mockResolvedValue({
     items: [],
     nextCursor: null,
   });
@@ -101,6 +111,8 @@ beforeEach(() => {
   apiMocks.apiPlazaStats.mockResolvedValue({
     totalUsers: 1,
     totalShares: 3,
+    songShares: 2,
+    playlistShares: 1,
   });
 
   apiMocks.apiUsersList.mockResolvedValue({
@@ -112,13 +124,21 @@ beforeEach(() => {
         avatarUrl: null,
         createdAt: "2026-01-01T00:00:00.000Z",
         shareCount: 3,
+        songShareCount: 2,
+        playlistShareCount: 1,
         latestSongTitle: "Song A",
         latestSingerName: "Singer A",
+        latestPlaylistName: "Playlist A",
+        latestShareKind: "song",
+        latestShareTitle: "Song A",
+        latestShareSubtitle: "Singer A",
         recentCoverUrls: [],
       },
     ],
     total: 1,
     totalShares: 3,
+    songShares: 2,
+    playlistShares: 1,
   });
 });
 
@@ -144,6 +164,25 @@ describe("PlazaPage", () => {
     };
   }
 
+  function buildPlaylistFeedItem(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: 1,
+      userId: 11,
+      userName: "Alice",
+      userAvatarUrl: null,
+      playlistId: "playlist-1",
+      shareLinkId: 2,
+      sharePath: "/playlist/share/playlist-1-token",
+      playlistName: "Office Mix",
+      playlistDescription: "适合工作时循环",
+      coverUrl: null,
+      itemCount: 8,
+      comment: "今天的专注歌单",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
   it("loads feed and stats first, then fetches users on demand", async () => {
     renderPage();
 
@@ -153,6 +192,7 @@ describe("PlazaPage", () => {
     });
 
     expect(apiMocks.apiUsersList).not.toHaveBeenCalled();
+    expect(apiMocks.apiPlaylistSharesFeed).not.toHaveBeenCalled();
 
     await userEvent.click(await screen.findByRole("button", { name: "分享者" }));
 
@@ -160,7 +200,41 @@ describe("PlazaPage", () => {
       expect(apiMocks.apiUsersList).toHaveBeenCalledTimes(1);
     });
 
-    expect(await screen.findByText(/最近：Song A · Singer A/)).toBeInTheDocument();
+    expect(await screen.findByText(/最近歌曲：Song A · Singer A/)).toBeInTheDocument();
+  });
+
+  it("shows the latest playlist share in user previews when it is newer than songs", async () => {
+    apiMocks.apiUsersList.mockResolvedValue({
+      users: [
+        {
+          id: 1,
+          username: "alice",
+          name: "Alice",
+          avatarUrl: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          shareCount: 2,
+          songShareCount: 1,
+          playlistShareCount: 1,
+          latestSongTitle: "Old Song",
+          latestSingerName: "Singer A",
+          latestPlaylistName: "Newest Playlist",
+          latestShareKind: "playlist",
+          latestShareTitle: "Newest Playlist",
+          latestShareSubtitle: null,
+          recentCoverUrls: [],
+        },
+      ],
+      total: 1,
+      totalShares: 2,
+      songShares: 1,
+      playlistShares: 1,
+    });
+
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "分享者" }));
+
+    expect(await screen.findByText("最近歌单：Newest Playlist")).toBeInTheDocument();
   });
 
   it("reuses cached feed and stats across remounts", async () => {
@@ -174,7 +248,7 @@ describe("PlazaPage", () => {
     firstRender.unmount();
     renderPage();
 
-    await screen.findByText("3 首分享");
+    await screen.findByText("3 条分享");
 
     expect(apiMocks.apiSharesFeed).toHaveBeenCalledTimes(1);
     expect(apiMocks.apiPlazaStats).toHaveBeenCalledTimes(1);
@@ -220,5 +294,46 @@ describe("PlazaPage", () => {
     expect(await screen.findByText("Song For User 2")).toBeInTheDocument();
     expect(screen.getByTestId("reactions")).toHaveTextContent("none");
     expect(apiMocks.apiSharesFeed).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads playlist shares on demand and lets owners revoke them", async () => {
+    authState.currentUser = {
+      id: 11,
+      username: "alice",
+      name: "Alice",
+      avatarUrl: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    apiMocks.apiPlaylistSharesFeed.mockResolvedValue({
+      items: [buildPlaylistFeedItem()],
+      nextCursor: null,
+    });
+    apiMocks.apiDeletePlaylistShare.mockResolvedValue({ ok: true });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(apiMocks.apiSharesFeed).toHaveBeenCalledTimes(1);
+    });
+
+    expect(apiMocks.apiPlaylistSharesFeed).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "歌单动态" }));
+
+    await waitFor(() => {
+      expect(apiMocks.apiPlaylistSharesFeed).toHaveBeenCalledTimes(1);
+    });
+
+    expect(await screen.findByText("Office Mix")).toBeInTheDocument();
+    expect(screen.getByText("今天的专注歌单")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "撤回" }));
+
+    await waitFor(() => {
+      expect(apiMocks.apiDeletePlaylistShare).toHaveBeenCalledWith(1);
+    });
+
+    expect(screen.queryByText("Office Mix")).not.toBeInTheDocument();
   });
 });

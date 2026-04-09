@@ -3,10 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   apiAddSongToDefaultPlaylist,
   apiDeleteShare,
+  apiDeletePlaylistShare,
   apiDeleteShareReaction,
   apiGetUser,
   apiSetShareReaction,
+  apiUserPlaylistShares,
   apiUserShares,
+  type PlaylistShare,
   type Share,
   type User,
 } from "../api";
@@ -16,7 +19,7 @@ import SongCard from "../components/SongCard";
 import Avatar from "../components/Avatar";
 import ShareReactionBar from "../components/ShareReactionBar";
 import { applyOptimisticReaction, type ReactionKey } from "../share-reactions";
-import { formatDateTime } from "../utils";
+import { formatDateTime, safeUrl } from "../utils";
 import { useDefaultPlaylistMids } from "../hooks";
 import { resetPlazaPageCache } from "./PlazaPage";
 
@@ -33,6 +36,7 @@ export default function UserPage() {
 
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [shares, setShares] = useState<Share[]>([]);
+  const [playlistShares, setPlaylistShares] = useState<PlaylistShare[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,9 +59,14 @@ export default function UserPage() {
     setLoading(true);
     setError(null);
     try {
-      const [uRes, sRes] = await Promise.all([apiGetUser(userId), apiUserShares(userId)]);
+      const [uRes, sRes, playlistRes] = await Promise.all([
+        apiGetUser(userId),
+        apiUserShares(userId),
+        apiUserPlaylistShares(userId),
+      ]);
       setProfileUser(uRes.user);
       setShares(sRes.shares);
+      setPlaylistShares(playlistRes.shares);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -77,6 +86,18 @@ export default function UserPage() {
       setShares((prev) => prev.filter((s) => s.id !== share.id));
       resetPlazaPageCache();
       showToast("已删除分享");
+    } catch (e) {
+      showToast((e as Error).message);
+    }
+  }
+
+  async function onDeletePlaylist(share: PlaylistShare) {
+    if (!confirm(`确定撤回歌单《${share.playlistName}》这条分享？`)) return;
+    try {
+      await apiDeletePlaylistShare(share.id);
+      setPlaylistShares((prev) => prev.filter((item) => item.id !== share.id));
+      resetPlazaPageCache();
+      showToast("已撤回歌单分享");
     } catch (e) {
       showToast((e as Error).message);
     }
@@ -205,7 +226,7 @@ export default function UserPage() {
                 {profileUser.name}
               </h1>
               <p className="page-subtitle">
-                共分享了 {shares.length} 首歌曲
+                共分享了 {shares.length} 首歌曲，{playlistShares.length} 个歌单
               </p>
             </div>
             {isOwner ? (
@@ -222,7 +243,7 @@ export default function UserPage() {
             <h2 className="heading-serif" style={{ fontSize: 17, margin: 0 }}>分享新歌曲</h2>
           </div>
           <div className="alert alert-info">
-            先把喜欢的歌加入歌单，再到歌单详情里点击“分享”，即可发布到主页和广场。
+            先把喜欢的歌加入歌单，再到歌单详情里点击“分享”或“分享到广场”，即可发布歌曲或歌单。
           </div>
           <div className="row">
             <Link className="btn btn-primary" to="/playlists">
@@ -237,7 +258,7 @@ export default function UserPage() {
         <div className="section-card stack">
           <div className="row-between">
             <h2 className="heading-serif" style={{ fontSize: 17, margin: 0 }}>
-              {isOwner ? "我的" : `${profileUser.name} 的`}分享
+              {isOwner ? "我的" : `${profileUser.name} 的`}歌曲分享
             </h2>
             <span className="text-xs">{shares.length} 首</span>
           </div>
@@ -290,6 +311,75 @@ export default function UserPage() {
               <div className="empty-icon">🎵</div>
               <div>{isOwner ? "你还没有分享过歌曲" : "Ta 还没有分享过歌曲"}</div>
               {isOwner ? <div className="text-xs">去歌单里挑一首歌，点“分享”发布到主页和广场</div> : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {!loading && profileUser ? (
+        <div className="section-card stack">
+          <div className="row-between">
+            <h2 className="heading-serif" style={{ fontSize: 17, margin: 0 }}>
+              {isOwner ? "我的" : `${profileUser.name} 的`}歌单分享
+            </h2>
+            <span className="text-xs">{playlistShares.length} 个</span>
+          </div>
+
+          {playlistShares.length ? (
+            <div className="stack-sm">
+              {playlistShares.map((sh) => (
+                <div key={sh.id} className="share-item">
+                  <div className="row" style={{ alignItems: "flex-start", gap: 12 }}>
+                    {safeUrl(sh.coverUrl) ? (
+                      <img
+                        src={safeUrl(sh.coverUrl)!}
+                        alt={sh.playlistName}
+                        className="cover"
+                        style={{ width: 72, height: 72, borderRadius: 12, flexShrink: 0 }}
+                      />
+                    ) : (
+                      <div className="cover-placeholder" style={{ width: 72, height: 72, flexShrink: 0 }}>♪</div>
+                    )}
+                    <div className="flex-1" style={{ minWidth: 0 }}>
+                      <div className="row-between" style={{ alignItems: "start", gap: 12 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div className="song-title truncate">{sh.playlistName}</div>
+                          <div className="song-meta">
+                            {sh.itemCount} 首歌曲
+                            {sh.playlistDescription ? ` · ${sh.playlistDescription}` : ""}
+                          </div>
+                        </div>
+                        {isOwner ? (
+                          <button
+                            className="btn btn-danger-ghost btn-sm"
+                            onClick={() => void onDeletePlaylist(sh)}
+                          >
+                            撤回
+                          </button>
+                        ) : (
+                          <Link className="btn btn-ghost btn-sm" to={sh.sharePath}>
+                            查看歌单
+                          </Link>
+                        )}
+                      </div>
+                      {sh.comment ? (
+                        <div className="share-comment" style={{ marginTop: 8 }}>
+                          {sh.comment}
+                        </div>
+                      ) : null}
+                      <div className="text-xs" style={{ marginTop: 8 }}>
+                        {formatDateTime(sh.createdAt)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <div className="empty-icon">🎵</div>
+              <div>{isOwner ? "你还没有分享过歌单" : "Ta 还没有分享过歌单"}</div>
+              {isOwner ? <div className="text-xs">去歌单详情页点击“分享到广场”，发布整张歌单</div> : null}
             </div>
           )}
         </div>

@@ -15,10 +15,12 @@ const apiMocks = vi.hoisted(() => ({
   apiRemovePlaylistItem: vi.fn(),
   apiReorderPlaylistItems: vi.fn(),
   apiCreatePlaylistShareLink: vi.fn(),
+  apiCreatePlaylistShare: vi.fn(),
   apiCreateShare: vi.fn(),
   apiImportQqPlaylist: vi.fn(),
   apiUpdatePlaylistMember: vi.fn(),
   apiRemovePlaylistMember: vi.fn(),
+  apiUserPlaylistShares: vi.fn(),
   apiUserShares: vi.fn(),
 }));
 
@@ -32,10 +34,12 @@ vi.mock("../api", () => ({
   apiRemovePlaylistItem: apiMocks.apiRemovePlaylistItem,
   apiReorderPlaylistItems: apiMocks.apiReorderPlaylistItems,
   apiCreatePlaylistShareLink: apiMocks.apiCreatePlaylistShareLink,
+  apiCreatePlaylistShare: apiMocks.apiCreatePlaylistShare,
   apiCreateShare: apiMocks.apiCreateShare,
   apiImportQqPlaylist: apiMocks.apiImportQqPlaylist,
   apiUpdatePlaylistMember: apiMocks.apiUpdatePlaylistMember,
   apiRemovePlaylistMember: apiMocks.apiRemovePlaylistMember,
+  apiUserPlaylistShares: apiMocks.apiUserPlaylistShares,
   apiUserShares: apiMocks.apiUserShares,
 }));
 
@@ -157,8 +161,26 @@ beforeEach(() => {
   apiMocks.apiUserShares.mockResolvedValue({
     shares: [{ id: 9, songMid: "song-1" }],
   });
+  apiMocks.apiUserPlaylistShares.mockResolvedValue({
+    shares: [],
+  });
   apiMocks.apiCreateShare.mockResolvedValue({
     share: { id: 10, userId: 7, songMid: "song-2", comment: "今晚单曲循环" },
+  });
+  apiMocks.apiCreatePlaylistShare.mockResolvedValue({
+    share: {
+      id: 11,
+      userId: 7,
+      playlistId: "playlist-1",
+      shareLinkId: 2,
+      sharePath: "/playlist/share/playlist-share-token",
+      playlistName: "我的收藏",
+      playlistDescription: "收藏夹",
+      coverUrl: null,
+      itemCount: 2,
+      comment: "今日打工歌单",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
   });
 });
 
@@ -190,6 +212,28 @@ describe("PlaylistDetailPage", () => {
     expect(screen.getAllByRole("button", { name: "已分享" })).toHaveLength(2);
   });
 
+  it("shares the whole playlist with the playlist composer", async () => {
+    renderPage();
+
+    expect(await screen.findByText("我的收藏")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "分享到广场" }));
+
+    const textarea = await screen.findByPlaceholderText("写一句关于这张歌单的介绍（可选）");
+    await userEvent.type(textarea, "今日打工歌单");
+    await userEvent.click(screen.getByRole("button", { name: "发布歌单到主页 / 广场" }));
+
+    await waitFor(() => {
+      expect(apiMocks.apiCreatePlaylistShare).toHaveBeenCalledWith("playlist-1", {
+        comment: "今日打工歌单",
+      });
+    });
+
+    expect(resetPlazaPageCacheMock).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("已将歌单《我的收藏》发布到主页和广场")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "已分享歌单" })).toBeDisabled();
+  });
+
   it("hides song share actions for viewers", async () => {
     apiMocks.apiGetPlaylistDetail.mockResolvedValue({
       playlist: { ...basePlaylist, role: "viewer" },
@@ -199,8 +243,9 @@ describe("PlaylistDetailPage", () => {
     renderPage();
 
     expect(await screen.findByText("Song One")).toBeInTheDocument();
-    expect(screen.queryByText("在下方歌曲右侧点击“分享”，即可发布到个人主页和广场。")).not.toBeInTheDocument();
+    expect(screen.queryByText(/在下方歌曲右侧点击“分享”可发布单曲/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "分享" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "已分享" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "分享到广场" })).not.toBeInTheDocument();
   });
 });

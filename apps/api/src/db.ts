@@ -206,6 +206,31 @@ function ensurePlaylistCoreTables(db: Db) {
 
     CREATE INDEX IF NOT EXISTS idx_playlist_share_links_expires_at
       ON playlist_share_links(expires_at);
+
+    CREATE TABLE IF NOT EXISTS playlist_shares (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      playlist_id TEXT NOT NULL,
+      share_link_id INTEGER NOT NULL,
+      share_path TEXT NOT NULL,
+      playlist_name TEXT NOT NULL,
+      playlist_description TEXT,
+      cover_url TEXT,
+      item_count INTEGER NOT NULL CHECK (item_count > 0),
+      comment TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+      FOREIGN KEY (share_link_id) REFERENCES playlist_share_links(id) ON DELETE CASCADE,
+      UNIQUE(user_id, playlist_id),
+      UNIQUE(share_link_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_playlist_shares_user_id_created_at
+      ON playlist_shares(user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_playlist_shares_playlist_id_created_at
+      ON playlist_shares(playlist_id, created_at DESC);
   `);
 }
 

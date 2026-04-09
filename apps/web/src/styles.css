@@ -1753,6 +1753,80 @@ button {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Plaza Playlist Feed
+═══════════════════════════════════════════════════════════════ */
+.playlist-feed-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.playlist-feed-card {
+  background: var(--cream-dark);
+  border: 1px solid var(--warm-200);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  transition: var(--transition);
+}
+
+.playlist-feed-card:hover {
+  box-shadow: var(--shadow-card-lg);
+  transform: translateY(-3px);
+  border-color: var(--warm-300);
+}
+
+.playlist-feed-cover-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  overflow: hidden;
+}
+
+.playlist-feed-cover {
+  width: 100%;
+  display: block;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.playlist-feed-cover-link:hover .playlist-feed-cover {
+  transform: scale(1.04);
+}
+
+.playlist-feed-cover-placeholder {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: linear-gradient(135deg, var(--warm-100), var(--warm-200));
+  display: grid;
+  place-items: center;
+  color: var(--ink-ghost);
+  font-size: 36px;
+}
+
+.playlist-feed-body {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.playlist-feed-description {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-light);
+}
+
+.playlist-feed-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Sortable Song Item (drag-and-drop)
 ═══════════════════════════════════════════════════════════════ */
 .sortable-song-item {
@@ -1821,6 +1895,11 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
   }
+
+  .playlist-feed-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1840,6 +1919,10 @@ button {
   .grid-3 { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 
   .plaza-share-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .playlist-feed-grid {
     grid-template-columns: 1fr;
     gap: 12px;
   }

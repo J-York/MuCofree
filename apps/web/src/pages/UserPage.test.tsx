@@ -9,9 +9,11 @@ import UserPage from "./UserPage";
 const apiMocks = vi.hoisted(() => ({
   apiAddSongToDefaultPlaylist: vi.fn(),
   apiDeleteShare: vi.fn(),
+  apiDeletePlaylistShare: vi.fn(),
   apiDeleteShareReaction: vi.fn(),
   apiGetUser: vi.fn(),
   apiSetShareReaction: vi.fn(),
+  apiUserPlaylistShares: vi.fn(),
   apiUserShares: vi.fn(),
 }));
 
@@ -32,9 +34,11 @@ const authState = vi.hoisted(() => ({
 vi.mock("../api", () => ({
   apiAddSongToDefaultPlaylist: apiMocks.apiAddSongToDefaultPlaylist,
   apiDeleteShare: apiMocks.apiDeleteShare,
+  apiDeletePlaylistShare: apiMocks.apiDeletePlaylistShare,
   apiDeleteShareReaction: apiMocks.apiDeleteShareReaction,
   apiGetUser: apiMocks.apiGetUser,
   apiSetShareReaction: apiMocks.apiSetShareReaction,
+  apiUserPlaylistShares: apiMocks.apiUserPlaylistShares,
   apiUserShares: apiMocks.apiUserShares,
 }));
 
@@ -141,8 +145,12 @@ beforeEach(() => {
       },
     ],
   });
+  apiMocks.apiUserPlaylistShares.mockResolvedValue({
+    shares: [],
+  });
 
   apiMocks.apiDeleteShare.mockResolvedValue({ ok: true });
+  apiMocks.apiDeletePlaylistShare.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -159,6 +167,37 @@ describe("UserPage", () => {
 
     await waitFor(() => {
       expect(apiMocks.apiDeleteShare).toHaveBeenCalledWith(42);
+      expect(plazaPageMocks.resetPlazaPageCache).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("invalidates plaza cache after deleting a playlist share", async () => {
+    apiMocks.apiUserPlaylistShares.mockResolvedValue({
+      shares: [
+        {
+          id: 51,
+          userId: 7,
+          playlistId: "playlist-1",
+          shareLinkId: 3,
+          sharePath: "/playlist/share/playlist-1-token",
+          playlistName: "Work Mix",
+          playlistDescription: "专注模式",
+          coverUrl: null,
+          itemCount: 6,
+          comment: "今天的工作歌单",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Work Mix")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "撤回" }));
+
+    await waitFor(() => {
+      expect(apiMocks.apiDeletePlaylistShare).toHaveBeenCalledWith(51);
       expect(plazaPageMocks.resetPlazaPageCache).toHaveBeenCalledTimes(1);
     });
   });

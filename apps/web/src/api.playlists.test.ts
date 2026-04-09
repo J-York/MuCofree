@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   apiAddSongToDefaultPlaylist,
+  apiCreatePlaylistShare,
   apiGetDefaultPlaylist,
   apiListPlaylists,
+  apiPlaylistSharesFeed,
   apiResolvePlaylistShareToken,
   type PlaylistSummary,
 } from "./api";
@@ -207,5 +209,57 @@ describe("playlist api client", () => {
 
     expect(data.requiresJoin).toBe(true);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/playlists/share/abc-token");
+  });
+
+  it("creates a playlist plaza share", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          share: {
+            id: 1,
+            userId: 1,
+            playlistId: "playlist-default",
+            shareLinkId: 2,
+            sharePath: "/playlist/share/abc-token",
+            playlistName: "我的收藏",
+            playlistDescription: null,
+            coverUrl: null,
+            itemCount: 3,
+            comment: "适合工位循环",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const data = await apiCreatePlaylistShare("playlist-default", {
+      comment: "适合工位循环",
+    });
+
+    expect(data.share.playlistId).toBe("playlist-default");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/playlists/playlist-default/shares");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? "{}"))).toEqual({
+      comment: "适合工位循环",
+    });
+  });
+
+  it("serializes playlist plaza feed pagination", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          items: [],
+          nextCursor: null,
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const data = await apiPlaylistSharesFeed(15, 10);
+
+    expect(data.items).toHaveLength(0);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/playlist-shares/feed?limit=10&cursor=15");
   });
 });

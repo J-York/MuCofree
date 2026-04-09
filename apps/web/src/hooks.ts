@@ -108,22 +108,23 @@ async function loadDefaultPlaylistSnapshot(userId: number, force = false): Promi
 
 export function useDefaultPlaylistMids() {
   const { user } = useAuth();
+  const userId = user?.id ?? null;
   const [snapshot, setSnapshot] = useState<DefaultPlaylistSnapshot>(() =>
-    user ? getCachedSnapshot(user.id) : cloneSnapshot(EMPTY_SNAPSHOT),
+    userId ? getCachedSnapshot(userId) : cloneSnapshot(EMPTY_SNAPSHOT),
   );
   const [loading, setLoading] = useState(() => {
-    if (!user) return false;
-    return !isCacheFresh(getCacheEntry(user.id));
+    if (!userId) return false;
+    return !isCacheFresh(getCacheEntry(userId));
   });
 
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setSnapshot(cloneSnapshot(EMPTY_SNAPSHOT));
       setLoading(false);
       return;
     }
 
-    const cached = getCacheEntry(user.id);
+    const cached = getCacheEntry(userId);
     if (cached?.snapshot) {
       setSnapshot(cloneSnapshot(cached.snapshot));
     } else {
@@ -138,7 +139,7 @@ export function useDefaultPlaylistMids() {
     let cancelled = false;
     setLoading(true);
 
-    void loadDefaultPlaylistSnapshot(user.id)
+    void loadDefaultPlaylistSnapshot(userId)
       .then((nextSnapshot) => {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
@@ -151,35 +152,35 @@ export function useDefaultPlaylistMids() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [userId]);
 
   const addMid = useCallback(
     (mid: string) => {
-      if (!user) return;
+      if (!userId) return;
 
       setSnapshot((prev) => {
         const nextSnapshot = {
           defaultPlaylist: prev.defaultPlaylist,
           playlistMids: new Set([...prev.playlistMids, mid]),
         };
-        writeSnapshot(user.id, nextSnapshot);
+        writeSnapshot(userId, nextSnapshot);
         return nextSnapshot;
       });
     },
-    [user?.id],
+    [userId],
   );
 
   const refreshMids = useCallback(async () => {
-    if (!user) return;
+    if (!userId) return;
 
     setLoading(true);
     try {
-      const nextSnapshot = await loadDefaultPlaylistSnapshot(user.id, true);
+      const nextSnapshot = await loadDefaultPlaylistSnapshot(userId, true);
       setSnapshot(nextSnapshot);
     } finally {
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [userId]);
 
   return {
     playlistMids: snapshot.playlistMids,

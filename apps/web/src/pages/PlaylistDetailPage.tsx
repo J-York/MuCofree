@@ -22,10 +22,12 @@ import {
   apiRemovePlaylistItem,
   apiReorderPlaylistItems,
   apiCreatePlaylistShareLink,
+  apiCreatePlaylistShare,
   apiCreateShare,
   apiImportQqPlaylist,
   apiUpdatePlaylistMember,
   apiRemovePlaylistMember,
+  apiUserPlaylistShares,
   apiUserShares,
   type PlaylistSummary,
   type PlaylistItem,
@@ -42,6 +44,7 @@ export default function PlaylistDetailPage() {
   const { playlistId } = useParams<{ playlistId: string }>();
   const navigate = useNavigate();
   const { user: me } = useAuth();
+  const meId = me?.id ?? null;
   const { play, removeFromPlaylistQueue, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
 
   const [playlist, setPlaylist] = useState<PlaylistSummary | null>(null);
@@ -57,9 +60,13 @@ export default function PlaylistDetailPage() {
   const [shareLinkScope, setShareLinkScope] = useState<"read" | "edit" | null>(null);
   const [shareLinkLoading, setShareLinkLoading] = useState(false);
   const [sharedSongMids, setSharedSongMids] = useState<Set<string>>(new Set());
+  const [sharedPlaylistIds, setSharedPlaylistIds] = useState<Set<string>>(new Set());
   const [shareDraftItem, setShareDraftItem] = useState<PlaylistItem | null>(null);
   const [shareComment, setShareComment] = useState("");
   const [shareSubmittingMid, setShareSubmittingMid] = useState<string | null>(null);
+  const [playlistShareComposerOpen, setPlaylistShareComposerOpen] = useState(false);
+  const [playlistShareComment, setPlaylistShareComment] = useState("");
+  const [playlistShareSubmitting, setPlaylistShareSubmitting] = useState(false);
   const [playlistImportLoading, setPlaylistImportLoading] = useState(false);
   const [memberActionUserId, setMemberActionUserId] = useState<number | null>(null);
 
@@ -67,6 +74,8 @@ export default function PlaylistDetailPage() {
   const playlistIdRef = useRef<string | null>(null);
   const shareComposerRef = useRef<HTMLDivElement | null>(null);
   const shareCommentRef = useRef<HTMLTextAreaElement | null>(null);
+  const playlistShareComposerRef = useRef<HTMLDivElement | null>(null);
+  const playlistShareCommentRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [toast, setToast] = useState<string | null>(null);
   function showToast(msg: string) {
@@ -76,7 +85,7 @@ export default function PlaylistDetailPage() {
 
   // ── Data loading ──────────────────────────────────────────────────────
 
-  async function loadItems(id: string) {
+  const loadItems = useCallback(async (id: string) => {
     setItemsLoading(true);
     setItemsError(null);
     try {
@@ -91,9 +100,9 @@ export default function PlaylistDetailPage() {
     } finally {
       setItemsLoading(false);
     }
-  }
+  }, []);
 
-  async function loadDetail(id: string) {
+  const loadDetail = useCallback(async (id: string) => {
     setMembersLoading(true);
     setMembersError(null);
     try {
@@ -105,20 +114,24 @@ export default function PlaylistDetailPage() {
     } finally {
       setMembersLoading(false);
     }
-  }
+  }, []);
 
-  async function reloadAll(id: string) {
+  const reloadAll = useCallback(async (id: string) => {
     await Promise.all([loadItems(id), loadDetail(id)]);
-  }
+  }, [loadItems, loadDetail]);
 
-  async function loadMySharedSongMids(userId: number) {
+  const loadMyShareState = useCallback(async (userId: number) => {
     try {
-      const data = await apiUserShares(userId);
-      setSharedSongMids(new Set(data.shares.map((share) => share.songMid)));
+      const [songData, playlistData] = await Promise.all([
+        apiUserShares(userId),
+        apiUserPlaylistShares(userId),
+      ]);
+      setSharedSongMids(new Set(songData.shares.map((share) => share.songMid)));
+      setSharedPlaylistIds(new Set(playlistData.shares.map((share) => share.playlistId)));
     } catch {
       // Non-blocking for playlist browsing; duplicate share attempts are still rejected server-side.
     }
-  }
+  }, []);
 
   useEffect(() => {
     if (!playlistId) {
@@ -128,16 +141,19 @@ export default function PlaylistDetailPage() {
     playlistIdRef.current = playlistId;
     setPageError(null);
     setShareLink(null);
+    setPlaylistShareComposerOpen(false);
+    setPlaylistShareComment("");
     void reloadAll(playlistId);
-  }, [playlistId]);
+  }, [playlistId, reloadAll]);
 
   useEffect(() => {
-    if (!me) {
+    if (!meId) {
       setSharedSongMids(new Set());
+      setSharedPlaylistIds(new Set());
       return;
     }
-    void loadMySharedSongMids(me.id);
-  }, [me?.id]);
+    void loadMyShareState(meId);
+  }, [meId, loadMyShareState]);
 
   // ── Derived state ─────────────────────────────────────────────────────
 
@@ -147,6 +163,7 @@ export default function PlaylistDetailPage() {
     playlist.status === "active" &&
     (playlist.role === "owner" || playlist.role === "editor"),
   );
+  const playlistCoverUrl = items.find((item) => safeUrl(item.coverUrl))?.coverUrl ?? null;
 
   // ── Business logic ────────────────────────────────────────────────────
 
@@ -213,7 +230,7 @@ export default function PlaylistDetailPage() {
         setReordering(false);
       }
     },
-    [items, playlist, reordering],
+    [items, playlist, reordering, reloadAll],
   );
 
   async function renamePlaylist() {
@@ -402,6 +419,8 @@ export default function PlaylistDetailPage() {
   function startShare(item: PlaylistItem) {
     if (sharedSongMids.has(item.songMid) || shareSubmittingMid === item.songMid) return;
 
+    setPlaylistShareComposerOpen(false);
+    setPlaylistShareComment("");
     setShareDraftItem(item);
     setShareComment("");
 
@@ -410,6 +429,22 @@ export default function PlaylistDetailPage() {
         shareComposerRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
       shareCommentRef.current?.focus();
+    });
+  }
+
+  function startPlaylistShare() {
+    if (!playlist || sharedPlaylistIds.has(playlist.id) || playlistShareSubmitting) return;
+
+    setShareDraftItem(null);
+    setShareComment("");
+    setPlaylistShareComposerOpen(true);
+    setPlaylistShareComment("");
+
+    requestAnimationFrame(() => {
+      if (typeof playlistShareComposerRef.current?.scrollIntoView === "function") {
+        playlistShareComposerRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      playlistShareCommentRef.current?.focus();
     });
   }
 
@@ -441,6 +476,33 @@ export default function PlaylistDetailPage() {
       showToast(message);
     } finally {
       setShareSubmittingMid(null);
+    }
+  }
+
+  async function submitPlaylistShare() {
+    if (!playlist) return;
+
+    const trimmedComment = playlistShareComment.trim();
+    setPlaylistShareSubmitting(true);
+    try {
+      await apiCreatePlaylistShare(playlist.id, {
+        comment: trimmedComment || null,
+      });
+      setSharedPlaylistIds((prev) => new Set([...prev, playlist.id]));
+      setPlaylistShareComposerOpen(false);
+      setPlaylistShareComment("");
+      resetPlazaPageCache();
+      showToast(`已将歌单《${playlist.name}》发布到主页和广场`);
+    } catch (e) {
+      const message = (e as Error).message;
+      if (message === "这个歌单已经分享过了") {
+        setSharedPlaylistIds((prev) => new Set([...prev, playlist.id]));
+        setPlaylistShareComposerOpen(false);
+        setPlaylistShareComment("");
+      }
+      showToast(message);
+    } finally {
+      setPlaylistShareSubmitting(false);
     }
   }
 
@@ -520,6 +582,19 @@ export default function PlaylistDetailPage() {
         >
           {playlistImportLoading ? "导入中…" : "导入 QQ 歌单"}
         </button>
+        {isOwner ? (
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => startPlaylistShare()}
+            disabled={playlist.itemCount === 0 || playlistShareSubmitting || sharedPlaylistIds.has(playlist.id)}
+          >
+            {sharedPlaylistIds.has(playlist.id)
+              ? "已分享歌单"
+              : playlistShareSubmitting
+                ? "分享中…"
+                : "分享到广场"}
+          </button>
+        ) : null}
         <button
           className="btn btn-ghost btn-sm"
           onClick={() => void generateShareLink("read")}
@@ -550,13 +625,87 @@ export default function PlaylistDetailPage() {
         </div>
       ) : null}
 
+      {playlistShareComposerOpen ? (
+        <div ref={playlistShareComposerRef} className="playlist-share-panel">
+          <div className="playlist-share-panel-header">
+            <div>
+              <div className="section-label" style={{ marginBottom: 10 }}>分享歌单</div>
+              <div className="page-subtitle" style={{ marginTop: 0 }}>
+                发布后会同步展示在你的主页和音乐广场。
+              </div>
+            </div>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setPlaylistShareComposerOpen(false);
+                setPlaylistShareComment("");
+              }}
+              disabled={playlistShareSubmitting}
+            >
+              取消
+            </button>
+          </div>
+
+          <div className="playlist-share-preview">
+            {safeUrl(playlistCoverUrl) ? (
+              <img
+                src={safeUrl(playlistCoverUrl)!}
+                alt={playlist.name}
+                className="cover"
+                style={{ width: 56, height: 56 }}
+              />
+            ) : (
+              <div className="cover-placeholder" style={{ width: 56, height: 56 }}>♪</div>
+            )}
+            <div className="flex-1" style={{ minWidth: 0 }}>
+              <div className="song-title">{playlist.name}</div>
+              <div className="song-meta">
+                {playlist.itemCount} 首歌曲
+                {playlist.description ? ` · ${playlist.description}` : " · 发布整张歌单到广场"}
+              </div>
+            </div>
+          </div>
+
+          <div className="form-field" style={{ marginBottom: 0 }}>
+            <label className="form-label" htmlFor="playlist-share-comment">
+              分享文案
+            </label>
+            <textarea
+              id="playlist-share-comment"
+              ref={playlistShareCommentRef}
+              className="textarea"
+              rows={3}
+              maxLength={200}
+              placeholder="写一句关于这张歌单的介绍（可选）"
+              value={playlistShareComment}
+              onChange={(e) => setPlaylistShareComment(e.target.value)}
+              disabled={playlistShareSubmitting}
+            />
+            <div className="row-between">
+              <span className="text-xs">可选，最多 200 字</span>
+              <span className="text-xs">{playlistShareComment.length} / 200</span>
+            </div>
+          </div>
+
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <button
+              className="btn btn-gold"
+              onClick={() => void submitPlaylistShare()}
+              disabled={playlistShareSubmitting}
+            >
+              {playlistShareSubmitting ? "发布中…" : "发布歌单到主页 / 广场"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Songs section */}
       <div>
         <div className="section-label" style={{ marginBottom: 8 }}>歌曲</div>
 
         {canEdit ? (
           <div className="alert alert-info mb-16">
-            在下方歌曲右侧点击“分享”，即可发布到个人主页和广场。
+            在下方歌曲右侧点击“分享”可发布单曲；owner 也可以在上方直接分享整张歌单到主页和广场。
           </div>
         ) : null}
 
