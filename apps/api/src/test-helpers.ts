@@ -6,7 +6,8 @@ export function createCsrfAgent(app: Parameters<typeof request.agent>[0]) {
   const agent = request.agent(app);
   let csrfToken: string | null = null;
 
-  agent.use((req) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  agent.use((req: any) => {
     const method = (req.method ?? "GET").toUpperCase();
     if (SAFE_METHODS.has(method)) return;
     if (csrfToken) {
