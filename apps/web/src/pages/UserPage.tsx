@@ -348,6 +348,7 @@ export default function UserPage() {
                       reactionCounts={sh.reactionCounts}
                       viewerReactionKey={sh.viewerReactionKey}
                       disabled={!me || isOwner}
+                      disabledReason={!me ? "登录后即可互动" : isOwner ? "不能给自己的分享互动" : undefined}
                       pending={pendingReactionShareIds.has(sh.id)}
                       onSelect={(key) => void onReact(sh, key)}
                     />
