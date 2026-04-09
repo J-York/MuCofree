@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   apiAddSongToDefaultPlaylist,
+  apiGetDefaultPlaylist,
   apiListPlaylists,
   apiResolvePlaylistShareToken,
   type PlaylistSummary,
@@ -121,6 +122,47 @@ describe("playlist api client", () => {
 
     expect(firstAddBody.expectedRevision).toBe(3);
     expect(secondAddBody.expectedRevision).toBe(4);
+  });
+
+  it("finds the default playlist beyond the first page", async () => {
+    const nonDefaultPlaylist = buildPlaylist({
+      id: "playlist-non-default",
+      isDefault: false,
+      name: "Other Playlist",
+    });
+    const defaultPlaylist = buildPlaylist({
+      id: "playlist-default",
+      isDefault: true,
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          items: [nonDefaultPlaylist],
+          total: 101,
+          nextOffset: 100,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          items: [defaultPlaylist],
+          total: 101,
+          nextOffset: null,
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await apiGetDefaultPlaylist();
+
+    expect(result).toMatchObject({
+      id: "playlist-default",
+      isDefault: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/playlists?offset=0&limit=100");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/playlists?offset=100&limit=100");
   });
 
   it("resolves playlist share token endpoint", async () => {

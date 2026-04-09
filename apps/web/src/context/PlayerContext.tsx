@@ -65,7 +65,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>("sequential");
   const [queueSource, setQueueSource] = useState<QueueSource>(null);
-  const [queueSourceKey, setQueueSourceKey] = useState<string | null>(null);
   const playModeRef = useRef<PlayMode>("sequential");
   const queueSourceRef = useRef<QueueSource>(null);
   const queueSourceKeyRef = useRef<string | null>(null);
@@ -149,7 +148,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     queueSourceRef.current = nextSource;
     queueSourceKeyRef.current = nextSourceKey;
     setQueueSource(nextSource);
-    setQueueSourceKey(nextSourceKey);
     if (playModeRef.current === "shuffle") {
       resetShuffleState(safeIndex, newQueue.length);
     } else if (extraQueue) {
@@ -245,7 +243,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         queueSourceRef.current = null;
         queueSourceKeyRef.current = null;
         setQueueSource(null);
-        setQueueSourceKey(null);
         setAudioUrl(null);
         setPlaying(false);
       } else if (removedCurrent) {
@@ -336,7 +333,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     queueSourceRef.current = null;
     queueSourceKeyRef.current = null;
     setQueueSource(null);
-    setQueueSourceKey(null);
     setQueue([]);
     setCurrentIndex(-1);
     setAudioUrl(null);

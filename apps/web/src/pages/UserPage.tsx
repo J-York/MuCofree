@@ -4,8 +4,6 @@ import {
   apiAddSongToDefaultPlaylist,
   apiDeleteShare,
   apiDeleteShareReaction,
-  apiGetDefaultPlaylist,
-  apiGetPlaylistItems,
   apiGetUser,
   apiSetShareReaction,
   apiUserShares,
@@ -19,6 +17,8 @@ import Avatar from "../components/Avatar";
 import ShareReactionBar from "../components/ShareReactionBar";
 import { applyOptimisticReaction, type ReactionKey } from "../share-reactions";
 import { formatDateTime } from "../utils";
+import { useDefaultPlaylistMids } from "../hooks";
+import { resetPlazaPageCache } from "./PlazaPage";
 
 export default function UserPage() {
   const params = useParams();
@@ -27,6 +27,7 @@ export default function UserPage() {
 
   const { user: me } = useAuth();
   const { play, appendToPlaylistQueue, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
+  const { playlistMids, addMid } = useDefaultPlaylistMids();
 
   const isOwner = !!me && me.id === userId;
 
@@ -35,7 +36,6 @@ export default function UserPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [playlistMids, setPlaylistMids] = useState<Set<string>>(new Set());
   const [pendingReactionShareIds, setPendingReactionShareIds] = useState<Set<number>>(new Set());
 
   // Toast
@@ -58,15 +58,6 @@ export default function UserPage() {
       const [uRes, sRes] = await Promise.all([apiGetUser(userId), apiUserShares(userId)]);
       setProfileUser(uRes.user);
       setShares(sRes.shares);
-      if (me && me.id !== userId) {
-        const defaultPlaylist = await apiGetDefaultPlaylist();
-        if (!defaultPlaylist) {
-          setPlaylistMids(new Set());
-        } else {
-          const itemsRes = await apiGetPlaylistItems(defaultPlaylist.id, 0, 500);
-          setPlaylistMids(new Set(itemsRes.items.map((item) => item.songMid)));
-        }
-      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -84,6 +75,7 @@ export default function UserPage() {
     try {
       await apiDeleteShare(share.id);
       setShares((prev) => prev.filter((s) => s.id !== share.id));
+      resetPlazaPageCache();
       showToast("已删除分享");
     } catch (e) {
       showToast((e as Error).message);
@@ -110,7 +102,7 @@ export default function UserPage() {
         },
         result.playlistId,
       );
-      setPlaylistMids((prev) => new Set([...prev, share.songMid]));
+      addMid(share.songMid);
       showToast(`已添加《${share.songTitle ?? share.songMid}》到我的收藏`);
     } catch (e) {
       showToast((e as Error).message);
@@ -230,11 +222,11 @@ export default function UserPage() {
             <h2 className="heading-serif" style={{ fontSize: 17, margin: 0 }}>分享新歌曲</h2>
           </div>
           <div className="alert alert-info">
-            现在分享歌曲需要先加入你的“我的歌单”，再从歌单里选择发布。
+            先把喜欢的歌加入歌单，再到歌单详情里点击“分享”，即可发布到主页和广场。
           </div>
           <div className="row">
             <Link className="btn btn-primary" to="/playlists">
-              去我的歌单分享
+              去歌单里分享
             </Link>
           </div>
         </div>
@@ -297,7 +289,7 @@ export default function UserPage() {
             <div className="empty-state">
               <div className="empty-icon">🎵</div>
               <div>{isOwner ? "你还没有分享过歌曲" : "Ta 还没有分享过歌曲"}</div>
-              {isOwner ? <div className="text-xs">在上方搜索一首歌开始分享吧</div> : null}
+              {isOwner ? <div className="text-xs">去歌单里挑一首歌，点“分享”发布到主页和广场</div> : null}
             </div>
           )}
         </div>

@@ -1,5 +1,5 @@
 import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
-import { ThemeProvider, useTheme } from "./context/ThemeContext";
+import { ThemeProvider } from "./context/ThemeContext";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import ThemeToggle from "./components/ThemeToggle";
 import { PlayerProvider } from "./context/PlayerContext";

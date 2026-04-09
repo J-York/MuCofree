@@ -194,6 +194,11 @@ export type UsersResponse = {
   totalShares: number;
 };
 
+export type PlazaStatsResponse = {
+  totalUsers: number;
+  totalShares: number;
+};
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function apiRegister(input: {
@@ -263,6 +268,11 @@ export async function apiUsersList(offset = 0, limit = 20): Promise<UsersRespons
   return readJson<UsersResponse>(res);
 }
 
+export async function apiPlazaStats(): Promise<PlazaStatsResponse> {
+  const res = await fetch("/api/plaza/stats", { method: "GET", credentials: "include" });
+  return readJson<PlazaStatsResponse>(res);
+}
+
 export async function apiGetUser(userId: number): Promise<{ user: User }> {
   const res = await fetch(`/api/users/${userId}`, { method: "GET", credentials: "include" });
   return readJson<{ user: User }>(res);
@@ -276,13 +286,8 @@ export async function apiUserShares(userId: number): Promise<{ shares: Share[] }
 // ── Shares ────────────────────────────────────────────────────────────────────
 
 export async function apiCreateShare(input: {
+  playlistId: string;
   songMid: string;
-  songTitle?: string | null;
-  songSubtitle?: string | null;
-  singerName?: string | null;
-  albumMid?: string | null;
-  albumName?: string | null;
-  coverUrl?: string | null;
   comment?: string | null;
 }): Promise<{ share: BaseShare }> {
   const res = await fetch("/api/shares", {
@@ -532,9 +537,29 @@ export async function apiRemovePlaylistMember(
   return readJson<{ ok: boolean; revision: number }>(res);
 }
 
+async function apiFindDefaultPlaylist(limit = 100): Promise<PlaylistSummary | null> {
+  let offset = 0;
+  let firstPlaylist: PlaylistSummary | null = null;
+
+  while (true) {
+    const data = await apiListPlaylists(offset, limit);
+    firstPlaylist ??= data.items[0] ?? null;
+
+    const defaultPlaylist = data.items.find((playlist) => playlist.isDefault);
+    if (defaultPlaylist) {
+      return defaultPlaylist;
+    }
+
+    if (data.nextOffset === null) {
+      return firstPlaylist;
+    }
+
+    offset = data.nextOffset;
+  }
+}
+
 export async function apiGetDefaultPlaylist(): Promise<PlaylistSummary | null> {
-  const data = await apiListPlaylists(0, 100);
-  return data.items.find((playlist) => playlist.isDefault) ?? null;
+  return apiFindDefaultPlaylist();
 }
 
 export async function apiAddSongToDefaultPlaylist(
@@ -607,54 +632,69 @@ function pickString(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
 }
 
-function pickMid(item: any): string | undefined {
-  return pickString(item?.mid) || pickString(item?.songmid) || pickString(item?.song_mid);
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
-function pickTitle(item: any): string | undefined {
+function pickMid(item: unknown): string | undefined {
+  const record = asRecord(item);
+  return pickString(record.mid) || pickString(record.songmid) || pickString(record.song_mid);
+}
+
+function pickTitle(item: unknown): string | undefined {
+  const record = asRecord(item);
   return (
-    pickString(item?.title) ||
-    pickString(item?.name) ||
-    pickString(item?.songname) ||
-    pickString(item?.song_title)
+    pickString(record.title) ||
+    pickString(record.name) ||
+    pickString(record.songname) ||
+    pickString(record.song_title)
   );
 }
 
-function pickSubtitle(item: any): string | undefined {
+function pickSubtitle(item: unknown): string | undefined {
+  const record = asRecord(item);
   return (
-    pickString(item?.subtitle) ||
-    pickString(item?.subtitle_name) ||
-    pickString(item?.subTitle) ||
-    pickString(item?.song_subtitle)
+    pickString(record.subtitle) ||
+    pickString(record.subtitle_name) ||
+    pickString(record.subTitle) ||
+    pickString(record.song_subtitle)
   );
 }
 
-function pickSinger(item: any): string | undefined {
-  const singerName = pickString(item?.singerName) || pickString(item?.singer_name);
+function pickSinger(item: unknown): string | undefined {
+  const record = asRecord(item);
+  const singerName = pickString(record.singerName) || pickString(record.singer_name);
   if (singerName) return singerName;
-  const singers = item?.singer || item?.singers;
+  const singers = record.singer || record.singers;
   if (Array.isArray(singers) && singers.length) {
     const names = singers
-      .map((s: any) => pickString(s?.name) || pickString(s?.title))
+      .map((s) => {
+        const singer = asRecord(s);
+        return pickString(singer.name) || pickString(singer.title);
+      })
       .filter(Boolean);
     if (names.length) return names.join(", ");
   }
   return undefined;
 }
 
-function pickAlbum(item: any): { albumMid?: string; albumName?: string } {
-  const album = item?.album;
-  const albumMid = pickString(album?.mid) || pickString(item?.album_mid) || pickString(item?.albummid);
+function pickAlbum(item: unknown): { albumMid?: string; albumName?: string } {
+  const record = asRecord(item);
+  const album = asRecord(record.album);
+  const albumMid = pickString(album.mid) || pickString(record.album_mid) || pickString(record.albummid);
   const albumName =
-    pickString(album?.name) || pickString(item?.album_name) || pickString(item?.albumname);
+    pickString(album.name) || pickString(record.album_name) || pickString(record.albumname);
   return { albumMid, albumName };
 }
 
-function extractSongList(payload: any): any[] {
-  const data = payload?.data;
-  if (Array.isArray(data?.list)) return data.list;
-  if (Array.isArray(data?.song?.list)) return data.song.list;
-  if (Array.isArray(data?.data?.list)) return data.data.list;
+function extractSongList(payload: unknown): unknown[] {
+  const record = asRecord(payload);
+  const data = asRecord(record.data);
+  const song = asRecord(data.song);
+  const nested = asRecord(data.data);
+  if (Array.isArray(data.list)) return data.list;
+  if (Array.isArray(song.list)) return song.list;
+  if (Array.isArray(nested.list)) return nested.list;
   return [];
 }
 
@@ -665,12 +705,12 @@ export async function apiQqSearch(keyword: string, signal?: AbortSignal): Promis
   sp.set("num", "20");
 
   const res = await fetch(`/api/qq/search?${sp.toString()}`, { credentials: "include", signal });
-  const payload = await readJson<any>(res);
+  const payload = await readJson<unknown>(res);
 
   const list = extractSongList(payload);
 
   return list
-    .map((item: any) => {
+    .map((item) => {
       const mid = pickMid(item);
       const title = pickTitle(item);
       if (!mid || !title) return null;
@@ -690,7 +730,8 @@ export async function apiQqSongUrl(mid: string, quality = "320"): Promise<string
   sp.set("mid", mid);
   sp.set("quality", quality);
   const res = await fetch(`/api/qq/song/url?${sp.toString()}`, { credentials: "include" });
-  const payload = await readJson<any>(res);
-  const url = payload?.data?.[mid];
+  const payload = await readJson<unknown>(res);
+  const data = asRecord(asRecord(payload).data);
+  const url = data[mid];
   return typeof url === "string" && url ? url : null;
 }

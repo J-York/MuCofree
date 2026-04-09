@@ -17,7 +17,6 @@ export function formatDateTime(iso: string): string {
 export function safeUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
-    // eslint-disable-next-line no-new
     new URL(url, window.location.href);
     return url;
   } catch {

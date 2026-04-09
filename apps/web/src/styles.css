@@ -430,6 +430,39 @@ button {
   gap: 8px;
 }
 
+.playlist-share-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  background: linear-gradient(180deg, var(--gold-light) 0%, var(--cream-dark) 100%);
+  border: 1px solid var(--gold-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.playlist-share-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.playlist-share-preview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(201, 151, 74, 0.18);
+  border-radius: var(--radius-md);
+}
+
+:root.dark .playlist-share-preview {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(212, 168, 96, 0.22);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Buttons — refined with subtle gradients
 ═══════════════════════════════════════════════════════════════ */
@@ -582,6 +615,33 @@ button {
   padding: 13px 16px;
   font-size: 15px;
   border-radius: var(--radius-md);
+}
+
+.textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 96px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--warm-200);
+  border-radius: var(--radius-md);
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  font-family: var(--font-sans);
+  resize: vertical;
+  outline: none;
+  transition: var(--transition);
+  box-shadow: var(--shadow-inset);
+}
+
+.textarea::placeholder {
+  color: var(--ink-ghost);
+}
+
+.textarea:focus {
+  border-color: var(--teal-mid);
+  box-shadow: 0 0 0 3px var(--teal-glow), var(--shadow-inset);
 }
 
 .search-bar {

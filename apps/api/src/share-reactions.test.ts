@@ -89,13 +89,26 @@ describe("share reactions api", () => {
   }
 
   async function createShare(agent: request.SuperAgentTest) {
-    const response = await agent.post("/api/shares").send({
+    const createPlaylistResponse = await agent.post("/api/playlists").send({
+      name: "Share Source",
+    });
+    expect(createPlaylistResponse.status).toBe(201);
+
+    const playlist = createPlaylistResponse.body.playlist as { id: string; revision: number };
+    const addSongResponse = await agent.post(`/api/playlists/${playlist.id}/items`).send({
       songMid: "song_mid_owner",
       songTitle: "Owner Song",
       singerName: "Owner Singer",
       albumMid: "album_mid_owner",
       albumName: "Owner Album",
       coverUrl: "https://example.com/cover.jpg",
+      expectedRevision: playlist.revision,
+    });
+    expect(addSongResponse.status).toBe(201);
+
+    const response = await agent.post("/api/shares").send({
+      playlistId: playlist.id,
+      songMid: "song_mid_owner",
       comment: "hello",
     });
 

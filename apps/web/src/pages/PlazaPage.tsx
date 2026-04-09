@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   apiAddSongToDefaultPlaylist,
   apiDeleteShare,
   apiDeleteShareReaction,
-  apiGetDefaultPlaylist,
-  apiGetPlaylistItems,
+  apiPlazaStats,
   apiSetShareReaction,
   apiSharesFeed,
   apiUsersList,
@@ -16,37 +15,138 @@ import Avatar from "../components/Avatar";
 import ShareReactionBar from "../components/ShareReactionBar";
 import { useAuth } from "../context/AuthContext";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
+import { useDefaultPlaylistMids } from "../hooks";
 import { applyOptimisticReaction, type ReactionKey } from "../share-reactions";
 import { formatDateTime, safeUrl } from "../utils";
 
 type ViewMode = "songs" | "users";
 
 const PAGE_SIZE = 20;
+const PLAZA_CACHE_TTL_MS = 30_000;
+
+type PlazaFeedCacheEntry = {
+  items: FeedShare[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  fetchedAt: number;
+};
+
+type PlazaUsersCacheEntry = {
+  items: UserWithPreview[];
+  nextOffset: number;
+  totalUsers: number;
+  totalShares: number;
+  hasMore: boolean;
+  fetchedAt: number;
+};
+
+type PlazaStatsCacheEntry = {
+  totalUsers: number;
+  totalShares: number;
+  fetchedAt: number;
+};
+
+const plazaFeedCache = new Map<string, PlazaFeedCacheEntry>();
+let plazaUsersCache: PlazaUsersCacheEntry | null = null;
+let plazaStatsCache: PlazaStatsCacheEntry | null = null;
+
+export function resetPlazaPageCache() {
+  plazaFeedCache.clear();
+  plazaUsersCache = null;
+  plazaStatsCache = null;
+}
+
+function isPlazaCacheFresh(fetchedAt: number) {
+  return Date.now() - fetchedAt < PLAZA_CACHE_TTL_MS;
+}
+
+function getFreshPlazaFeedCache(viewerCacheKey: string) {
+  const cacheEntry = plazaFeedCache.get(viewerCacheKey);
+  if (!cacheEntry || !isPlazaCacheFresh(cacheEntry.fetchedAt)) return null;
+  return {
+    ...cacheEntry,
+    items: [...cacheEntry.items],
+  };
+}
+
+function getFreshPlazaUsersCache() {
+  if (!plazaUsersCache || !isPlazaCacheFresh(plazaUsersCache.fetchedAt)) return null;
+  return {
+    ...plazaUsersCache,
+    items: [...plazaUsersCache.items],
+  };
+}
+
+function getFreshPlazaStatsCache() {
+  if (!plazaStatsCache || !isPlazaCacheFresh(plazaStatsCache.fetchedAt)) return null;
+  return { ...plazaStatsCache };
+}
+
+function writePlazaFeedCache(viewerCacheKey: string, items: FeedShare[], nextCursor: number | null) {
+  plazaFeedCache.set(viewerCacheKey, {
+    items: [...items],
+    nextCursor,
+    hasMore: nextCursor !== null,
+    fetchedAt: Date.now(),
+  });
+}
+
+function writePlazaUsersCache(
+  items: UserWithPreview[],
+  nextOffset: number,
+  totalUsers: number,
+  totalShares: number,
+  hasMore: boolean,
+) {
+  plazaUsersCache = {
+    items: [...items],
+    nextOffset,
+    totalUsers,
+    totalShares,
+    hasMore,
+    fetchedAt: Date.now(),
+  };
+}
+
+function writePlazaStatsCache(totalUsers: number, totalShares: number) {
+  plazaStatsCache = {
+    totalUsers,
+    totalShares,
+    fetchedAt: Date.now(),
+  };
+}
 
 export default function PlazaPage() {
   const [view, setView] = useState<ViewMode>("songs");
   const { currentSong, playing, play, appendToPlaylistQueue, togglePlayPause, loadingMid } = usePlayer();
   const { user: me } = useAuth();
+  const viewerCacheKey = me ? `user:${me.id}` : "guest";
+  const cachedFeed = getFreshPlazaFeedCache(viewerCacheKey);
+  const cachedUsers = getFreshPlazaUsersCache();
+  const cachedStats = getFreshPlazaStatsCache();
+  const { playlistMids, addMid, loading: playlistLoading } = useDefaultPlaylistMids();
 
   // ── 歌曲动态（游标分页）─────────────────────────────────────────────────
-  const [feedItems, setFeedItems] = useState<FeedShare[]>([]);
-  const [feedCursor, setFeedCursor] = useState<number | null | undefined>(undefined); // undefined = not loaded
+  const [feedItems, setFeedItems] = useState<FeedShare[]>(() => cachedFeed?.items ?? []);
+  const [feedCursor, setFeedCursor] = useState<number | null | undefined>(() =>
+    cachedFeed ? cachedFeed.nextCursor : undefined,
+  ); // undefined = not loaded
   const [feedLoading, setFeedLoading] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
-  const [feedHasMore, setFeedHasMore] = useState(true);
+  const [feedHasMore, setFeedHasMore] = useState(() => cachedFeed?.hasMore ?? true);
+  const [feedLoaded, setFeedLoaded] = useState(Boolean(cachedFeed));
 
   // ── 分享者（偏移分页）──────────────────────────────────────────────────
-  const [userItems, setUserItems] = useState<UserWithPreview[]>([]);
-  const [userOffset, setUserOffset] = useState(0);
-  const [userTotal, setUserTotal] = useState(0);
-  const [totalShares, setTotalShares] = useState(0);
+  const [userItems, setUserItems] = useState<UserWithPreview[]>(() => cachedUsers?.items ?? []);
+  const [userOffset, setUserOffset] = useState(() => cachedUsers?.nextOffset ?? 0);
+  const [userTotal, setUserTotal] = useState(() => cachedStats?.totalUsers ?? cachedUsers?.totalUsers ?? 0);
+  const [totalShares, setTotalShares] = useState(() => cachedStats?.totalShares ?? cachedUsers?.totalShares ?? 0);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
-  const [usersHasMore, setUsersHasMore] = useState(true);
+  const [usersHasMore, setUsersHasMore] = useState(() => cachedUsers?.hasMore ?? true);
+  const [usersLoaded, setUsersLoaded] = useState(Boolean(cachedUsers));
+  const [statsLoaded, setStatsLoaded] = useState(Boolean(cachedStats ?? cachedUsers));
 
-  // ── 我的歌单状态（用于“已收藏”判定）────────────────────────────────────
-  const [playlistMids, setPlaylistMids] = useState<Set<string>>(new Set());
-  const [playlistLoading, setPlaylistLoading] = useState(false);
   const [addingMids, setAddingMids] = useState<Set<string>>(new Set());
   const [pendingReactionShareIds, setPendingReactionShareIds] = useState<Set<number>>(new Set());
 
@@ -57,72 +157,114 @@ export default function PlazaPage() {
     setTimeout(() => setToast(null), 2500);
   }
 
-  // 首次加载
-  const initRef = useRef(false);
-  useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
-    void loadFeed(null);
-    void loadUsers(0);
-  }, []);
-
-  useEffect(() => {
-    if (!me) {
-      setPlaylistMids(new Set());
-      return;
-    }
-    void loadPlaylistMids();
-  }, [me?.id]);
-
-  async function loadFeed(cursor: number | null) {
+  const loadFeed = useCallback(async (cursor: number | null) => {
+    setFeedLoaded(true);
     setFeedLoading(true);
     setFeedError(null);
     try {
       const data = await apiSharesFeed(cursor, PAGE_SIZE);
-      setFeedItems((prev) => cursor === null ? data.items : [...prev, ...data.items]);
       setFeedCursor(data.nextCursor);
       setFeedHasMore(data.nextCursor !== null);
+      setFeedItems((prev) => {
+        const nextItems = cursor === null ? data.items : [...prev, ...data.items];
+        writePlazaFeedCache(viewerCacheKey, nextItems, data.nextCursor);
+        return nextItems;
+      });
     } catch (e) {
       setFeedError((e as Error).message);
     } finally {
       setFeedLoading(false);
     }
-  }
+  }, [viewerCacheKey]);
 
-  async function loadUsers(offset: number) {
+  const loadStats = useCallback(async () => {
+    try {
+      const data = await apiPlazaStats();
+      setUserTotal(data.totalUsers);
+      setTotalShares(data.totalShares);
+      setStatsLoaded(true);
+      writePlazaStatsCache(data.totalUsers, data.totalShares);
+    } catch {
+      // Keep stale/cache placeholders instead of surfacing a second error block.
+    }
+  }, []);
+
+  const loadUsers = useCallback(async (offset: number) => {
+    setUsersLoaded(true);
     setUsersLoading(true);
     setUsersError(null);
     try {
       const data = await apiUsersList(offset, PAGE_SIZE);
-      setUserItems((prev) => offset === 0 ? data.users : [...prev, ...data.users]);
-      setUserOffset(offset + data.users.length);
+      const nextOffset = offset + data.users.length;
+      const hasMore = nextOffset < data.total;
+
+      setUserOffset(nextOffset);
       setUserTotal(data.total);
       setTotalShares(data.totalShares);
-      setUsersHasMore(offset + data.users.length < data.total);
+      setUsersHasMore(hasMore);
+      setStatsLoaded(true);
+      writePlazaStatsCache(data.total, data.totalShares);
+      setUserItems((prev) => {
+        const nextItems = offset === 0 ? data.users : [...prev, ...data.users];
+        writePlazaUsersCache(nextItems, nextOffset, data.total, data.totalShares, hasMore);
+        return nextItems;
+      });
     } catch (e) {
       setUsersError((e as Error).message);
     } finally {
       setUsersLoading(false);
     }
+  }, []);
+
+  function updateFeedItems(updater: (prev: FeedShare[]) => FeedShare[]) {
+    setFeedItems((prev) => {
+      const nextItems = updater(prev);
+      writePlazaFeedCache(viewerCacheKey, nextItems, feedCursor ?? null);
+      return nextItems;
+    });
   }
 
-  async function loadPlaylistMids() {
-    setPlaylistLoading(true);
-    try {
-      const defaultPlaylist = await apiGetDefaultPlaylist();
-      if (!defaultPlaylist) {
-        setPlaylistMids(new Set());
-        return;
-      }
+  function invalidateUsersSnapshot() {
+    plazaUsersCache = null;
+    setUserItems([]);
+    setUserOffset(0);
+    setUsersHasMore(true);
+    setUsersError(null);
+    setUsersLoaded(false);
+  }
 
-      const data = await apiGetPlaylistItems(defaultPlaylist.id, 0, 500);
-      setPlaylistMids(new Set(data.items.map((item) => item.songMid)));
-    } catch {
-      setPlaylistMids(new Set());
-    } finally {
-      setPlaylistLoading(false);
+  useEffect(() => {
+    const nextCachedFeed = getFreshPlazaFeedCache(viewerCacheKey);
+    if (nextCachedFeed) {
+      setFeedItems(nextCachedFeed.items);
+      setFeedCursor(nextCachedFeed.nextCursor);
+      setFeedHasMore(nextCachedFeed.hasMore);
+      setFeedError(null);
+      setFeedLoaded(true);
+    } else {
+      setFeedItems([]);
+      setFeedCursor(undefined);
+      setFeedHasMore(true);
+      setFeedError(null);
+      setFeedLoaded(false);
     }
-  }
+    setPendingReactionShareIds(new Set());
+  }, [viewerCacheKey]);
+
+  useEffect(() => {
+    if (feedLoaded) return;
+    void loadFeed(null);
+  }, [feedLoaded, loadFeed]);
+
+  useEffect(() => {
+    if (statsLoaded) return;
+    void loadStats();
+  }, [statsLoaded, loadStats]);
+
+  useEffect(() => {
+    if (view !== "users" || usersLoaded) return;
+    void loadUsers(0);
+  }, [usersLoaded, view, loadUsers]);
 
   async function addToPlaylist(sh: FeedShare) {
     if (playlistMids.has(sh.songMid) || addingMids.has(sh.songMid)) return;
@@ -147,7 +289,7 @@ export default function PlazaPage() {
         },
         result.playlistId,
       );
-      setPlaylistMids((prev) => new Set([...prev, sh.songMid]));
+      addMid(sh.songMid);
       showToast(`已添加《${sh.songTitle ?? sh.songMid}》到我的收藏`);
     } catch (e) {
       showToast((e as Error).message);
@@ -164,7 +306,10 @@ export default function PlazaPage() {
     if (!confirm(`确定撤回《${sh.songTitle ?? sh.songMid}》这条分享？`)) return;
     try {
       await apiDeleteShare(sh.id);
-      setFeedItems((prev) => prev.filter((s) => s.id !== sh.id));
+      updateFeedItems((prev) => prev.filter((s) => s.id !== sh.id));
+      invalidateUsersSnapshot();
+      plazaStatsCache = null;
+      void loadStats();
       showToast("已撤回分享");
     } catch (e) {
       showToast((e as Error).message);
@@ -187,7 +332,7 @@ export default function PlazaPage() {
     }
 
     setPendingReactionShareIds((prev) => new Set([...prev, sh.id]));
-    setFeedItems((prev) =>
+    updateFeedItems((prev) =>
       prev.map((item) =>
         item.id === sh.id
           ? {
@@ -206,7 +351,7 @@ export default function PlazaPage() {
         await apiSetShareReaction(sh.id, clickedReactionKey);
       }
     } catch (e) {
-      setFeedItems((prev) =>
+      updateFeedItems((prev) =>
         prev.map((item) =>
           item.id === sh.id
             ? {
@@ -228,6 +373,8 @@ export default function PlazaPage() {
   }
 
   const displayedShares = useMemo(() => feedItems.length, [feedItems]);
+  const totalSharesLabel = statsLoaded ? String(totalShares) : "…";
+  const userTotalLabel = statsLoaded ? String(userTotal) : "…";
 
   function handlePlayShare(sh: FeedShare) {
     const song: PlayerSong = {
@@ -258,7 +405,7 @@ export default function PlazaPage() {
               color: "var(--banner-badge-text)"
             }}
           >
-            {totalShares} 首分享
+            {totalSharesLabel} 首分享
           </span>
           <span
             className="badge badge-gold"
@@ -267,7 +414,7 @@ export default function PlazaPage() {
               color: "var(--banner-badge-text)"
             }}
           >
-            {userTotal} 位分享者
+            {userTotalLabel} 位分享者
           </span>
         </div>
       </div>
@@ -382,19 +529,23 @@ export default function PlazaPage() {
                 );
               })}
             </div>
-          ) : !feedLoading ? (
+          ) : !feedLoaded || feedLoading ? (
+            <div className="empty-state">
+              <div className="spinner" style={{ width: 28, height: 28, borderWidth: 3 }} />
+            </div>
+          ) : (
             <div className="empty-state">
               <div className="empty-icon">🎵</div>
               <div>还没有人分享音乐</div>
               <div className="text-xs">登录后前往你的主页开始分享吧</div>
             </div>
-          ) : null}
+          )}
 
           {/* 加载更多 */}
           <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
             {feedLoading ? (
-              <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-            ) : feedHasMore ? (
+              feedItems.length > 0 ? <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} /> : null
+            ) : feedLoaded && feedHasMore ? (
               <button
                 className="btn btn-secondary"
                 onClick={() => void loadFeed(feedCursor ?? null)}
@@ -455,19 +606,23 @@ export default function PlazaPage() {
                 </Link>
               ))}
             </div>
-          ) : !usersLoading ? (
+          ) : !usersLoaded || usersLoading ? (
+            <div className="empty-state">
+              <div className="spinner" style={{ width: 28, height: 28, borderWidth: 3 }} />
+            </div>
+          ) : (
             <div className="empty-state">
               <div className="empty-icon">🎵</div>
               <div>还没有人分享音乐</div>
               <div className="text-xs">登录后前往你的主页开始分享吧</div>
             </div>
-          ) : null}
+          )}
 
           {/* 加载更多 */}
           <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
             {usersLoading ? (
-              <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} />
-            ) : usersHasMore ? (
+              userItems.length > 0 ? <div className="spinner" style={{ width: 24, height: 24, borderWidth: 3 }} /> : null
+            ) : usersLoaded && usersHasMore ? (
               <button
                 className="btn btn-secondary"
                 onClick={() => void loadUsers(userOffset)}

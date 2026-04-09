@@ -6,12 +6,10 @@ import {
   type PlaylistSummary,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
-import { usePlayer } from "../context/PlayerContext";
 
 export default function PlaylistListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { appendToPlaylistQueue } = usePlayer();
 
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [loading, setLoading] = useState(true);

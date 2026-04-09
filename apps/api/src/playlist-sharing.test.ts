@@ -164,7 +164,8 @@ describe("playlist sharing api", () => {
 
     const ownerDetailResponse = await ownerAgent.get(`/api/playlists/${playlist.id}`);
     expect(ownerDetailResponse.status).toBe(200);
-    const approvedMember = ownerDetailResponse.body.members.find((member: any) => member.userId === editor.id);
+    const members = ownerDetailResponse.body.members as Array<{ userId: number; role: string; status: string }>;
+    const approvedMember = members.find((member) => member.userId === editor.id);
     expect(approvedMember).toMatchObject({ role: "editor", status: "active" });
 
     expect(owner.id).toBeGreaterThan(0);
@@ -189,5 +190,49 @@ describe("playlist sharing api", () => {
 
     const resolveExpiredResponse = await viewerAgent.get(`/api/playlists/share/${token}`);
     expect(resolveExpiredResponse.status).toBe(410);
+  });
+
+  it("only allows sharing songs from an editable playlist", async () => {
+    await register(ownerAgent, "share_policy_owner");
+    await register(viewerAgent, "share_policy_viewer");
+
+    const playlist = await createPlaylist(ownerAgent, "Share Policy Playlist");
+    const addSongResponse = await addSong(ownerAgent, playlist.id, "share-policy-song", playlist.revision);
+    expect(addSongResponse.status).toBe(201);
+
+    const createReadLinkResponse = await ownerAgent.post(`/api/playlists/${playlist.id}/share-links`).send({
+      scope: "read",
+      expiresInHours: 12,
+    });
+    expect(createReadLinkResponse.status).toBe(201);
+
+    const token = createReadLinkResponse.body.token as string;
+    const joinResponse = await viewerAgent.post(`/api/playlists/share/${token}/join`);
+    expect(joinResponse.status).toBe(200);
+
+    const viewerShareAttempt = await viewerAgent.post("/api/shares").send({
+      playlistId: playlist.id,
+      songMid: "share-policy-song",
+      comment: "viewer share attempt",
+    });
+    expect(viewerShareAttempt.status).toBe(403);
+
+    const ownerWrongSongAttempt = await ownerAgent.post("/api/shares").send({
+      playlistId: playlist.id,
+      songMid: "missing-song",
+      comment: "missing song",
+    });
+    expect(ownerWrongSongAttempt.status).toBe(400);
+
+    const ownerShareAttempt = await ownerAgent.post("/api/shares").send({
+      playlistId: playlist.id,
+      songMid: "share-policy-song",
+      comment: "owner share attempt",
+    });
+    expect(ownerShareAttempt.status).toBe(201);
+    expect(ownerShareAttempt.body.share).toMatchObject({
+      songMid: "share-policy-song",
+      comment: "owner share attempt",
+    });
   });
 });

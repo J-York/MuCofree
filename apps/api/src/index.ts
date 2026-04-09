@@ -590,6 +590,16 @@ function dbPlaylistItems(db: Db, playlistId: string, limit: number, offset: numb
   ).all(playlistId, limit, offset) as PlaylistItemRow[];
 }
 
+function dbGetPlaylistItemBySongMid(db: Db, playlistId: string, songMid: string): PlaylistItemRow | undefined {
+  return db.prepare(
+    `SELECT *
+     FROM playlist_items
+     WHERE playlist_id = ?
+       AND song_mid = ?
+     LIMIT 1`
+  ).get(playlistId, songMid) as PlaylistItemRow | undefined;
+}
+
 function dbPlaylistItemsCount(db: Db, playlistId: string): number {
   const row = db.prepare("SELECT COUNT(*) AS n FROM playlist_items WHERE playlist_id = ?").get(playlistId) as { n: number };
   return row.n;
@@ -923,18 +933,17 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
     try {
       const body = z
         .object({
+          playlistId: z.string().trim().min(1).max(128),
           songMid: z.string().min(1),
-          songTitle: z.string().trim().min(1).max(200).optional().nullable(),
-          songSubtitle: z.string().trim().max(200).optional().nullable(),
-          singerName: z.string().trim().max(200).optional().nullable(),
-          albumMid: z.string().trim().max(50).optional().nullable(),
-          albumName: z.string().trim().max(200).optional().nullable(),
-          coverUrl: z.string().max(500).optional().nullable(),
           comment: z.string().trim().max(200).optional().nullable()
         })
         .parse(req.body);
 
       const userId = req.session.userId!;
+      const playlistAccess = authorizePlaylistAccess(db, userId, body.playlistId, "editor");
+      const item = dbGetPlaylistItemBySongMid(db, playlistAccess.id, body.songMid);
+      if (!item) throw httpError(400, "只能分享当前歌单中的歌曲");
+
       const existingShare = dbGetUserShareBySongMid(db, userId, body.songMid);
       if (existingShare) throw httpError(409, SHARE_ALREADY_EXISTS_MESSAGE);
 
@@ -944,12 +953,12 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       ).run(
         userId,
         body.songMid,
-        body.songTitle ?? null,
-        body.songSubtitle ?? null,
-        body.singerName ?? null,
-        body.albumMid ?? null,
-        body.albumName ?? null,
-        body.coverUrl ?? null,
+        item.song_title ?? null,
+        item.song_subtitle ?? null,
+        item.singer_name ?? null,
+        item.album_mid ?? null,
+        item.album_name ?? null,
+        item.cover_url ?? null,
         body.comment ?? null
       );
 
@@ -1064,6 +1073,16 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         shares: sharesByUser.get(u.id) ?? []
       }))
     });
+  });
+
+  app.get("/api/plaza/stats", (_req, res, next) => {
+    try {
+      const totalUsers = dbUsersCount(db);
+      const totalShares = dbSharesCount(db);
+      res.json({ totalUsers, totalShares });
+    } catch (e) {
+      next(e);
+    }
   });
 
   // ── Shares feed (paginated) ───────────────────────────────────────────────
@@ -1979,17 +1998,30 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
 
       type NormalizedSong = DailyRecommendSong;
 
-      function normalizeFromSongInfo(item: any): NormalizedSong | null {
-        const mid = typeof item?.mid === "string" ? item.mid.trim() : "";
-        const title = typeof item?.title === "string" ? item.title.trim() : typeof item?.name === "string" ? item.name.trim() : "";
+      function asRecord(value: unknown): Record<string, unknown> {
+        return value && typeof value === "object" ? value as Record<string, unknown> : {};
+      }
+
+      function normalizeFromSongInfo(item: unknown): NormalizedSong | null {
+        const record = asRecord(item);
+        const album = asRecord(record.album);
+        const mid = typeof record.mid === "string" ? record.mid.trim() : "";
+        const title = typeof record.title === "string" ? record.title.trim() : typeof record.name === "string" ? record.name.trim() : "";
         if (!mid || !title) return null;
-        const singers: any[] = Array.isArray(item?.singer) ? item.singer : [];
-        const singerName = singers.map((s: any) => s?.name || "").filter(Boolean).join(", ");
-        const albumMid = typeof item?.album?.mid === "string" ? item.album.mid : "";
-        const albumName = typeof item?.album?.name === "string"
-          ? item.album.name
-          : typeof item?.album?.title === "string"
-            ? item.album.title
+        const singers = Array.isArray(record.singer) ? record.singer : [];
+        const singerName = singers
+          .map((s) => {
+            if (typeof s === "string") return s;
+            const singer = asRecord(s);
+            return typeof singer.name === "string" ? singer.name : "";
+          })
+          .filter(Boolean)
+          .join(", ");
+        const albumMid = typeof album.mid === "string" ? album.mid : "";
+        const albumName = typeof album.name === "string"
+          ? album.name
+          : typeof album.title === "string"
+            ? album.title
             : "";
         const coverUrl = albumMid
           ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}_1.jpg`
@@ -1997,7 +2029,7 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         return {
           mid,
           title,
-          subtitle: typeof item?.subtitle === "string" ? item.subtitle : "",
+          subtitle: typeof record.subtitle === "string" ? record.subtitle : "",
           singerName,
           albumMid,
           albumName,
@@ -2005,46 +2037,54 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         };
       }
 
-      function normalizeFromTopSong(item: any): NormalizedSong | null {
-        const mid = typeof item?.mid === "string"
-          ? item.mid.trim()
-          : typeof item?.songMid === "string"
-            ? item.songMid.trim()
-            : typeof item?.songInfo?.mid === "string"
-              ? item.songInfo.mid.trim()
+      function normalizeFromTopSong(item: unknown): NormalizedSong | null {
+        const record = asRecord(item);
+        const songInfo = asRecord(record.songInfo);
+        const album = asRecord(record.album);
+        const songAlbum = asRecord(songInfo.album);
+        const mid = typeof record.mid === "string"
+          ? record.mid.trim()
+          : typeof record.songMid === "string"
+            ? record.songMid.trim()
+            : typeof songInfo.mid === "string"
+              ? songInfo.mid.trim()
               : "";
-        const title = typeof item?.title === "string"
-          ? item.title.trim()
-          : typeof item?.name === "string"
-            ? item.name.trim()
-            : typeof item?.songName === "string"
-              ? item.songName.trim()
+        const title = typeof record.title === "string"
+          ? record.title.trim()
+          : typeof record.name === "string"
+            ? record.name.trim()
+            : typeof record.songName === "string"
+              ? record.songName.trim()
               : "";
         if (!mid || !title) return null;
-        const singers = Array.isArray(item?.singer)
-          ? item.singer
-          : Array.isArray(item?.singerName)
-            ? item.singerName
-            : Array.isArray(item?.songInfo?.singer)
-              ? item.songInfo.singer
+        const singers = Array.isArray(record.singer)
+          ? record.singer
+          : Array.isArray(record.singerName)
+            ? record.singerName
+            : Array.isArray(songInfo.singer)
+              ? songInfo.singer
               : [];
         const singerName = singers
-          .map((s: any) => typeof s === "string" ? s : s?.name || "")
+          .map((s) => {
+            if (typeof s === "string") return s;
+            const singer = asRecord(s);
+            return typeof singer.name === "string" ? singer.name : "";
+          })
           .filter(Boolean)
           .join(", ");
-        const albumMid = typeof item?.albumMid === "string"
-          ? item.albumMid
-          : typeof item?.album?.mid === "string"
-            ? item.album.mid
-            : typeof item?.songInfo?.album?.mid === "string"
-              ? item.songInfo.album.mid
+        const albumMid = typeof record.albumMid === "string"
+          ? record.albumMid
+          : typeof album.mid === "string"
+            ? album.mid
+            : typeof songAlbum.mid === "string"
+              ? songAlbum.mid
               : "";
-        const albumName = typeof item?.albumName === "string"
-          ? item.albumName
-          : typeof item?.album?.name === "string"
-            ? item.album.name
-            : typeof item?.songInfo?.album?.name === "string"
-              ? item.songInfo.album.name
+        const albumName = typeof record.albumName === "string"
+          ? record.albumName
+          : typeof album.name === "string"
+            ? album.name
+            : typeof songAlbum.name === "string"
+              ? songAlbum.name
               : "";
         const coverUrl = albumMid
           ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}_1.jpg`
@@ -2052,10 +2092,10 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
         return {
           mid,
           title,
-          subtitle: typeof item?.subtitle === "string"
-            ? item.subtitle
-            : typeof item?.songInfo?.subtitle === "string"
-              ? item.songInfo.subtitle
+          subtitle: typeof record.subtitle === "string"
+            ? record.subtitle
+            : typeof songInfo.subtitle === "string"
+              ? songInfo.subtitle
               : "",
           singerName,
           albumMid,
@@ -2071,13 +2111,16 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       const songsPerTop = 20;
       const maxExtraTops = 1;
 
-      const catalogPayload = await qqTop(qq) as any;
-      const groups: any[] = Array.isArray(catalogPayload?.data?.group) ? catalogPayload.data.group : [];
+      const catalogPayload = asRecord(await qqTop(qq));
+      const catalogData = asRecord(catalogPayload.data);
+      const groups = Array.isArray(catalogData.group) ? catalogData.group : [];
       const allTopIds: number[] = [];
       for (const group of groups) {
-        const toplist: any[] = Array.isArray(group?.toplist) ? group.toplist : [];
+        const groupRecord = asRecord(group);
+        const toplist = Array.isArray(groupRecord.toplist) ? groupRecord.toplist : [];
         for (const top of toplist) {
-          if (typeof top?.topId === "number") allTopIds.push(top.topId);
+          const topRecord = asRecord(top);
+          if (typeof topRecord.topId === "number") allTopIds.push(topRecord.topId);
         }
       }
 
@@ -2134,12 +2177,13 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
           const topId = pendingIds[index]!;
           fetchedTopIds.add(topId);
           if (result.status !== "fulfilled") return;
-          const payload = result.value as any;
-          const songInfoList: any[] = Array.isArray(payload?.data?.songInfoList) ? payload.data.songInfoList : [];
-          const fallbackSongList: any[] = Array.isArray(payload?.data?.songList)
-            ? payload.data.songList
-            : Array.isArray(payload?.data?.song)
-              ? payload.data.song
+          const payload = asRecord(result.value);
+          const payloadData = asRecord(payload.data);
+          const songInfoList = Array.isArray(payloadData.songInfoList) ? payloadData.songInfoList : [];
+          const fallbackSongList = Array.isArray(payloadData.songList)
+            ? payloadData.songList
+            : Array.isArray(payloadData.song)
+              ? payloadData.song
               : [];
           const normalizedSongs = songInfoList.length
             ? songInfoList.map((item) => normalizeFromSongInfo(item))

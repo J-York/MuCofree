@@ -2,24 +2,47 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   apiAddSongToDefaultPlaylist,
-  apiGetPlaylistItems,
-  apiListPlaylists,
   apiQqSearch,
   apiRecommendDaily,
   type QqSong,
-  type PlaylistSummary,
   type DailySong,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { usePlayer, type PlayerSong } from "../context/PlayerContext";
 import SongCard from "../components/SongCard";
+import { useDefaultPlaylistMids } from "../hooks";
 
 type Tab = "search" | "daily";
 const DAILY_REFRESH_COOLDOWN_MS = 10_000;
+const HOME_DAILY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type HomeDailyCacheEntry = {
+  songs: DailySong[];
+  seedDate: string | null;
+  fetchedAt: number;
+};
+
+const homeDailyCache = new Map<number, HomeDailyCacheEntry>();
+
+function getFreshHomeDailyCache(userId: number | null | undefined) {
+  if (!userId) return null;
+
+  const entry = homeDailyCache.get(userId);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt >= HOME_DAILY_CACHE_TTL_MS) return null;
+  return entry;
+}
+
+export function resetHomeDailyCache() {
+  homeDailyCache.clear();
+}
 
 export default function HomePage() {
   const { user } = useAuth();
+  const currentUserId = user?.id ?? null;
+  const cachedDaily = getFreshHomeDailyCache(currentUserId);
   const { play, appendToPlaylistQueue, loadingMid, isCurrentSong, currentSong, playing } = usePlayer();
+  const { playlistMids, defaultPlaylist, addMid, refreshMids } = useDefaultPlaylistMids();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab: Tab = searchParams.get("tab") === "daily" ? "daily" : "search";
 
@@ -40,17 +63,13 @@ export default function HomePage() {
   const [results, setResults] = useState<QqSong[]>([]);
   const searchAbortRef = useRef<AbortController | null>(null);
 
-  // Playlist mids (for showing "已收藏" state on search/daily results)
-  const [playlistMids, setPlaylistMids] = useState<Set<string>>(new Set());
-  const [defaultPlaylist, setDefaultPlaylist] = useState<PlaylistSummary | null>(null);
-
   // Daily recommendation
-  const [dailySongs, setDailySongs] = useState<DailySong[]>([]);
+  const [dailySongs, setDailySongs] = useState<DailySong[]>(() => cachedDaily?.songs ?? []);
   const [dailyLoading, setDailyLoading] = useState(false);
   const [dailyError, setDailyError] = useState<string | null>(null);
-  const [dailyDate, setDailyDate] = useState<string | null>(null);
+  const [dailyDate, setDailyDate] = useState<string | null>(() => cachedDaily?.seedDate ?? null);
   const [dailyRefreshLocked, setDailyRefreshLocked] = useState(false);
-  const dailyLoadedRef = useRef(false);
+  const dailyLoadedRef = useRef(Boolean(cachedDaily));
 
   // Toast
   const [toast, setToast] = useState<string | null>(null);
@@ -60,38 +79,31 @@ export default function HomePage() {
     setTimeout(() => setToast(null), 2500);
   }
 
-  const loadDefaultPlaylistSnapshot = useCallback(async () => {
-    try {
-      const data = await apiListPlaylists(0, 100);
-      const def = data.items.find((p) => p.isDefault) ?? data.items[0] ?? null;
-      setDefaultPlaylist(def);
-
-      if (!def) {
-        setPlaylistMids(new Set());
-        return;
-      }
-
-      const itemsRes = await apiGetPlaylistItems(def.id, 0, 500);
-      setPlaylistMids(new Set(itemsRes.items.map((item) => item.songMid)));
-    } catch {
-      // Non-critical; users can still add songs, badges may be stale until next refresh.
-      setDefaultPlaylist(null);
-      setPlaylistMids(new Set());
-    }
-  }, []);
-
   useEffect(() => {
-    void loadDefaultPlaylistSnapshot();
-  }, [user?.id, loadDefaultPlaylistSnapshot]);
+    const nextCached = getFreshHomeDailyCache(currentUserId);
+    setDailySongs(nextCached?.songs ?? []);
+    setDailyDate(nextCached?.seedDate ?? null);
+    setDailyError(null);
+    setDailyRefreshLocked(false);
+    dailyLoadedRef.current = Boolean(nextCached);
+  }, [currentUserId]);
 
   // Daily recommendation
   const loadDaily = useCallback(async (refresh = false) => {
+    if (!currentUserId) return;
+
     setDailyLoading(true);
     setDailyError(null);
     try {
       const data = await apiRecommendDaily(refresh);
       setDailySongs(data.songs);
       setDailyDate(data.seedDate);
+      homeDailyCache.set(currentUserId, {
+        songs: data.songs,
+        seedDate: data.seedDate,
+        fetchedAt: Date.now(),
+      });
+      dailyLoadedRef.current = true;
       if (refresh) {
         setDailyRefreshLocked(true);
         setTimeout(() => setDailyRefreshLocked(false), DAILY_REFRESH_COOLDOWN_MS);
@@ -101,13 +113,13 @@ export default function HomePage() {
     } finally {
       setDailyLoading(false);
     }
-  }, []);
+  }, [currentUserId]);
 
   useEffect(() => {
     if (tab !== "daily" || dailyLoadedRef.current) return;
     dailyLoadedRef.current = true;
     void loadDaily(false);
-  }, [tab, loadDaily]);
+  }, [tab, loadDaily, currentUserId]);
 
   function refreshDaily() {
     if (dailyLoading || dailyRefreshLocked) return;
@@ -163,11 +175,11 @@ export default function HomePage() {
         },
         result.playlistId,
       );
-      setPlaylistMids((prev) => new Set([...prev, song.mid]));
+      addMid(song.mid);
       showToast(`已添加《${song.title}》到${defaultPlaylist?.name ?? "默认歌单"}`);
 
       if (!defaultPlaylist || defaultPlaylist.id !== result.playlistId) {
-        void loadDefaultPlaylistSnapshot();
+        void refreshMids();
       }
     } catch (e) {
       const message = (e as Error).message;
