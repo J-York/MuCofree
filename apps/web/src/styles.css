@@ -862,8 +862,8 @@ button {
 .user-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 20px;
+  gap: 10px;
+  padding: 14px;
   background: var(--cream-dark);
   border: 1px solid var(--warm-200);
   border-radius: var(--radius-lg);
@@ -901,13 +901,13 @@ button {
 .user-card-covers {
   display: flex;
   gap: 4px;
-  height: 60px;
+  height: 48px;
   overflow: hidden;
 }
 
 .user-card-covers .cover {
   flex: 1;
-  height: 60px;
+  height: 48px;
   border-radius: 6px;
 }
 
@@ -948,13 +948,13 @@ button {
 
 .share-comment {
   display: inline-block;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--brown);
   background: var(--brown-light);
   border-left: 3px solid var(--brown);
-  padding: 6px 12px;
+  padding: 4px 10px;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  margin-top: 6px;
+  margin-top: 4px;
   font-style: italic;
   line-height: 1.5;
 }
@@ -966,7 +966,7 @@ button {
 .share-reaction-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .share-reaction-hint {
@@ -994,13 +994,13 @@ button {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: 4px;
+  padding: 3px 8px;
   border: 1px solid var(--warm-200);
   border-radius: 999px;
   background: var(--cream);
   color: var(--ink-mid);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 1.2;
   cursor: pointer;
@@ -1033,17 +1033,17 @@ button {
 }
 
 .share-reaction-chip-emoji {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
 }
 
 .share-reaction-chip-count {
-  min-width: 18px;
-  padding: 1px 5px;
+  min-width: 16px;
+  padding: 1px 4px;
   border-radius: 999px;
   background: var(--warm-100);
   color: var(--ink-light);
-  font-size: 11px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -1371,7 +1371,7 @@ button {
 .plaza-banner {
   background: linear-gradient(135deg, #1D5454 0%, var(--teal) 30%, var(--teal-mid) 70%, #3B8E8E 100%);
   border-radius: var(--radius-xl);
-  padding: 40px 44px;
+  padding: 32px 36px;
   color: #F8F6F1;
   position: relative;
   overflow: hidden;
@@ -1418,7 +1418,7 @@ button {
 .plaza-banner-sub {
   font-size: 15px;
   opacity: 0.85;
-  margin-bottom: 22px;
+  margin-bottom: 16px;
   position: relative;
   letter-spacing: 0.3px;
 }
@@ -1635,7 +1635,7 @@ button {
 .plaza-share-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -1671,7 +1671,7 @@ button {
 .plaza-share-cover {
   width: 100%;
   display: block;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 3 / 2;
   object-fit: cover;
   transition: transform 0.4s ease;
 }
@@ -1682,7 +1682,7 @@ button {
 
 .plaza-share-cover-placeholder {
   width: 100%;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 3 / 2;
   background: linear-gradient(135deg, var(--warm-100), var(--warm-200));
   display: grid;
   place-items: center;
@@ -1729,24 +1729,24 @@ button {
 }
 
 .plaza-share-body {
-  padding: 16px 18px 18px;
+  padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .plaza-share-body .share-comment {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .plaza-share-user {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 8px;
+  margin-top: 4px;
   text-decoration: none;
   color: inherit;
-  padding: 4px 0;
+  padding: 2px 0;
   transition: var(--transition);
   border-radius: var(--radius-sm);
   flex: 1;
@@ -1756,8 +1756,8 @@ button {
 .plaza-share-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 2px;
 }
 
 .plaza-share-user:hover {
@@ -1770,7 +1770,7 @@ button {
 .playlist-feed-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 14px;
   align-items: start;
 }
 
@@ -1819,10 +1819,10 @@ button {
 }
 
 .playlist-feed-body {
-  padding: 16px 18px 18px;
+  padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .playlist-feed-description {
@@ -1834,8 +1834,8 @@ button {
 .playlist-feed-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 2px;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1905,12 +1905,12 @@ button {
 @media (max-width: 980px) {
   .plaza-share-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
+    gap: 12px;
   }
 
   .playlist-feed-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
+    gap: 12px;
   }
 }
 
@@ -1924,7 +1924,7 @@ button {
     padding: 0 16px;
   }
   .player-audio-wrap { display: none; }
-  .plaza-banner { padding: 28px 22px; }
+  .plaza-banner { padding: 24px 20px; }
   .plaza-banner-title { font-size: 24px; }
   .page-content { padding: 20px 0 100px; }
   .grid-2 { grid-template-columns: 1fr; }
@@ -1932,11 +1932,11 @@ button {
 
   .plaza-share-grid {
     grid-template-columns: 1fr;
-    gap: 12px;
+    gap: 10px;
   }
   .playlist-feed-grid {
     grid-template-columns: 1fr;
-    gap: 12px;
+    gap: 10px;
   }
   .login-card { padding: 28px 20px; }
 }

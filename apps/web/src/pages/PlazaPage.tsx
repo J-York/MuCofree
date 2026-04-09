@@ -531,7 +531,7 @@ export default function PlazaPage() {
   }
 
   return (
-    <div className="stack-lg" style={{ marginTop: 8 }}>
+    <div className="stack-lg" style={{ marginTop: 8, gap: 22 }}>
       {/* Banner */}
       <div className="plaza-banner">
         <div className="plaza-banner-title">打工人音乐广场</div>
@@ -842,14 +842,14 @@ export default function PlazaPage() {
                               src={safeUrl(url)!}
                               alt=""
                               className="cover"
-                              style={{ flex: 1, height: 60, borderRadius: 6 }}
+                              style={{ flex: 1, height: 48, borderRadius: 6 }}
                               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                             />
                           ) : null
                         )}
                       </div>
                     ) : (
-                      <div className="cover-placeholder" style={{ height: 60, borderRadius: 8, width: "100%", fontSize: 22 }}>♪</div>
+                      <div className="cover-placeholder" style={{ height: 48, borderRadius: 8, width: "100%", fontSize: 20 }}>♪</div>
                     )}
 
                     {/* User info */}
