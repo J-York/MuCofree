@@ -26,6 +26,7 @@ type PlayerState = {
   play: (song: PlayerSong, extraQueue?: PlayerSong[], source?: QueueSource, sourceKey?: string | null) => void;
   enqueue: (song: PlayerSong) => void;
   appendToPlaylistQueue: (song: PlayerSong, playlistId?: string | null) => void;
+  removeFromQueue: (songMid: string) => void;
   removeFromPlaylistQueue: (songMid: string, playlistId?: string | null) => void;
   playIndex: (index: number) => void;
   next: () => void;
@@ -72,6 +73,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const shuffleOrderRef = useRef<number[]>([]);
   const shufflePositionRef = useRef(-1);
   const shuffleHistoryRef = useRef<number[]>([]);
+  const playbackRequestIdRef = useRef(0);
   const currentSong = currentIndex >= 0 ? queue[currentIndex] ?? null : null;
 
   const resetShuffleState = useCallback((targetIndex: number, nextQueueLength: number) => {
@@ -119,11 +121,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [currentIndex, ensureShuffleState, queue.length, resetShuffleState]);
 
   const fetchAndPlay = useCallback(async (song: PlayerSong, idx: number, newQueue?: PlayerSong[]) => {
+    const requestId = playbackRequestIdRef.current + 1;
+    playbackRequestIdRef.current = requestId;
     setLoadingMid(song.mid);
     setPlaying(false);
     setErrorMsg(null);
     try {
       const url = await apiQqSongUrl(song.mid);
+      if (playbackRequestIdRef.current !== requestId) return;
       if (!url) {
         setErrorMsg(`无法获取《${song.title}》的播放链接`);
         return;
@@ -133,9 +138,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setCurrentIndex(idx);
       setPlaying(true);
     } catch {
+      if (playbackRequestIdRef.current !== requestId) return;
       setErrorMsg(`加载《${song.title}》失败`);
     } finally {
-      setLoadingMid(null);
+      if (playbackRequestIdRef.current === requestId) {
+        setLoadingMid(null);
+      }
     }
   }, []);
 
@@ -188,16 +196,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   }, [currentIndex, ensureShuffleState]);
 
-  const removeFromPlaylistQueue = useCallback((songMid: string, playlistId?: string | null) => {
-    if (queueSourceRef.current !== "playlist") return;
-    if (!playlistId || !queueSourceKeyRef.current || playlistId !== queueSourceKeyRef.current) return;
+  const removeFromQueue = useCallback((songMid: string) => {
+    if (loadingMid === songMid) {
+      playbackRequestIdRef.current += 1;
+      setLoadingMid(null);
+    }
+
     setQueue((q) => {
       const removeIndex = q.findIndex((item) => item.mid === songMid);
       if (removeIndex === -1) return q;
 
       const nextQueue = q.filter((item) => item.mid !== songMid);
       const removedCurrent = removeIndex === currentIndex;
-      const nextIndex =
+      let nextIndex =
         nextQueue.length === 0
           ? -1
           : removedCurrent
@@ -207,22 +218,41 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               : currentIndex;
 
       if (playModeRef.current === "shuffle") {
+        const playableIndex = getPlayableIndex(currentIndex, q.length);
+        if (playableIndex >= 0) {
+          ensureShuffleState(playableIndex, q.length);
+        }
+
         const remapIndex = (index: number) => {
           if (index === removeIndex) return -1;
           return index > removeIndex ? index - 1 : index;
         };
 
-        shuffleOrderRef.current = shuffleOrderRef.current
+        const nextShuffleOrder = shuffleOrderRef.current
           .map(remapIndex)
           .filter((index) => index >= 0);
 
-        shuffleHistoryRef.current = shuffleHistoryRef.current
+        const nextShuffleHistory = shuffleHistoryRef.current
           .map(remapIndex)
           .filter((index) => index >= 0);
 
-        if (nextIndex >= 0) {
-          const position = shuffleOrderRef.current.indexOf(nextIndex);
-          shufflePositionRef.current = position >= 0 ? position : 0;
+        shuffleOrderRef.current = nextShuffleOrder;
+        shuffleHistoryRef.current = nextShuffleHistory;
+
+        if (nextQueue.length > 0) {
+          if (removedCurrent) {
+            const nextPosition = Math.min(
+              Math.max(shufflePositionRef.current, 0),
+              nextShuffleOrder.length - 1,
+            );
+            const nextShuffleIndex = nextShuffleOrder[nextPosition] ?? nextShuffleOrder[0] ?? 0;
+            nextIndex = nextShuffleIndex;
+            shufflePositionRef.current = nextPosition;
+          } else {
+            const position = nextShuffleOrder.indexOf(nextIndex);
+            shufflePositionRef.current = position >= 0 ? position : 0;
+          }
+
           if (shuffleHistoryRef.current[shuffleHistoryRef.current.length - 1] !== nextIndex) {
             shuffleHistoryRef.current.push(nextIndex);
           }
@@ -234,6 +264,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setCurrentIndex(nextIndex);
 
       if (nextQueue.length === 0) {
+        playbackRequestIdRef.current += 1;
         const audio = audioRef.current;
         if (audio) {
           audio.pause();
@@ -244,6 +275,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         queueSourceKeyRef.current = null;
         setQueueSource(null);
         setAudioUrl(null);
+        setLoadingMid(null);
+        setErrorMsg(null);
         setPlaying(false);
       } else if (removedCurrent) {
         void fetchAndPlay(nextQueue[nextIndex]!, nextIndex);
@@ -251,7 +284,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       return nextQueue;
     });
-  }, [currentIndex, ensureShuffleState, fetchAndPlay, resetShuffleState]);
+  }, [currentIndex, ensureShuffleState, fetchAndPlay, loadingMid, resetShuffleState]);
+
+  const removeFromPlaylistQueue = useCallback((songMid: string, playlistId?: string | null) => {
+    if (queueSourceRef.current !== "playlist") return;
+    if (!playlistId || !queueSourceKeyRef.current || playlistId !== queueSourceKeyRef.current) return;
+    removeFromQueue(songMid);
+  }, [removeFromQueue]);
 
   const playIndex = useCallback((index: number) => {
     setQueue((q) => {
@@ -327,6 +366,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [ensureShuffleState, fetchAndPlay]);
 
   const clearQueue = useCallback(() => {
+    playbackRequestIdRef.current += 1;
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
@@ -340,6 +380,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setQueue([]);
     setCurrentIndex(-1);
     setAudioUrl(null);
+    setLoadingMid(null);
+    setErrorMsg(null);
     setPlaying(false);
   }, [resetShuffleState]);
 
@@ -385,6 +427,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       play,
       enqueue,
       appendToPlaylistQueue,
+      removeFromQueue,
       removeFromPlaylistQueue,
       playIndex,
       next,
@@ -416,6 +459,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       queue,
       queueSource,
       appendToPlaylistQueue,
+      removeFromQueue,
       removeFromPlaylistQueue,
       setPlaying,
       togglePlayPause,
