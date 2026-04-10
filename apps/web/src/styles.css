@@ -1445,6 +1445,71 @@ button {
   color: var(--ink-light);
 }
 
+.player-lyrics-drawer {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.player-lyrics-content {
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.player-lyrics-empty {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--ink-light);
+  font-size: 14px;
+}
+
+.player-lyrics-status {
+  gap: 10px;
+  flex-direction: column;
+}
+
+.player-lyrics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 8px 20px;
+}
+
+.player-lyrics-list-plain {
+  gap: 12px;
+}
+
+.player-lyric-line {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  color: var(--ink-light);
+  transition: var(--transition);
+}
+
+.player-lyric-line-active {
+  background: rgba(45, 106, 106, 0.12);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px rgba(45, 106, 106, 0.14);
+}
+
+.player-lyric-line-text {
+  font-size: 15px;
+  line-height: 1.6;
+  font-weight: 600;
+}
+
+.player-lyric-line-trans {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-ghost);
+}
+
+.player-lyric-line-active .player-lyric-line-trans {
+  color: var(--ink-light);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Login Page — richer atmosphere
 ═══════════════════════════════════════════════════════════════ */

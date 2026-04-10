@@ -749,6 +749,15 @@ export type QqSong = {
   coverUrl?: string;
 };
 
+export type QqLyricFormat = "lrc" | "qrc" | "plain";
+
+export type QqLyricResponse = {
+  lyric: string | null;
+  trans: string | null;
+  roma: string | null;
+  format: QqLyricFormat;
+};
+
 function pickString(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
 }
@@ -855,4 +864,19 @@ export async function apiQqSongUrl(mid: string, quality = "320"): Promise<string
   const data = asRecord(asRecord(payload).data);
   const url = data[mid];
   return typeof url === "string" && url ? url : null;
+}
+
+export async function apiQqLyric(
+  mid: string,
+  options: { qrc?: boolean; trans?: boolean; roma?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<QqLyricResponse> {
+  const sp = new URLSearchParams();
+  sp.set("mid", mid);
+  if (options.qrc) sp.set("qrc", "1");
+  if (options.trans) sp.set("trans", "1");
+  if (options.roma) sp.set("roma", "1");
+
+  const res = await apiFetch(`/api/qq/lyric?${sp.toString()}`, { signal });
+  return readJson<QqLyricResponse>(res);
 }

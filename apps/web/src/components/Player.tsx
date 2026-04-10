@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { apiQqLyric } from "../api";
 import { usePlayer, type PlayerSong, type QueueSource } from "../context/PlayerContext";
+import { getActiveLyricLineIndex, parseLyrics, type ParsedLyrics } from "../lyrics";
 import { safeUrl } from "../utils";
 
 function formatTime(seconds: number): string {
@@ -74,6 +76,14 @@ function QueueIcon() {
   );
 }
 
+function LyricsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="currentColor">
+      <path d="M4 6h16v2H4zm0 5h10v2H4zm0 5h16v2H4zm13-5.25V8.5h2v6.18a2.75 2.75 0 1 1-2-2.63z" />
+    </svg>
+  );
+}
+
 function RemoveIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="currentColor">
@@ -96,6 +106,21 @@ const queueSourceLabels: Record<Exclude<QueueSource, null>, string> = {
   single: "单曲播放"
 };
 
+type PlayerPanel = "queue" | "lyrics" | null;
+
+type LyricViewState = {
+  mid: string | null;
+  status: "idle" | "loading" | "ready" | "empty" | "error";
+  parsed: ParsedLyrics | null;
+  message: string | null;
+};
+
+type CachedLyricEntry = {
+  status: "ready" | "empty";
+  parsed: ParsedLyrics;
+  message: null;
+};
+
 export default function Player() {
   const {
     queue,
@@ -103,6 +128,8 @@ export default function Player() {
     currentSong,
     playing,
     audioUrl,
+    currentTime,
+    duration,
     loadingMid,
     errorMsg,
     playMode,
@@ -115,20 +142,33 @@ export default function Player() {
     clearQueue,
     removeFromQueue,
     setPlayingState,
+    setPlaybackProgress,
+    seekTo,
+    togglePlayPause,
     cyclePlayMode,
     audioRef
   } = usePlayer();
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const lastAudioUrlRef = React.useRef<string | null>(null);
+  const lastAudioUrlRef = useRef<string | null>(null);
   const [coverError, setCoverError] = useState(false);
-  const [isQueueOpen, setIsQueueOpen] = useState(false);
-  const playerBarRef = React.useRef<HTMLDivElement | null>(null);
-  const currentQueueItemRef = React.useRef<HTMLDivElement | null>(null);
+  const [openPanel, setOpenPanel] = useState<PlayerPanel>(null);
+  const [lyricState, setLyricState] = useState<LyricViewState>({
+    mid: null,
+    status: "idle",
+    parsed: null,
+    message: null,
+  });
+  const lyricCacheRef = useRef<Map<string, CachedLyricEntry>>(new Map());
+  const playerBarRef = useRef<HTMLDivElement | null>(null);
+  const currentQueueItemRef = useRef<HTMLDivElement | null>(null);
+  const activeLyricLineRef = useRef<HTMLDivElement | null>(null);
+  const isQueueOpen = openPanel === "queue";
+  const isLyricsOpen = openPanel === "lyrics";
+  const lyricsPanelId = "player-lyrics-panel";
+  const queuePanelId = "player-queue-panel";
 
   // Reset cover error whenever song changes
   const coverSrc = currentSong?.coverUrl;
-  React.useEffect(() => {
+  useEffect(() => {
     setCoverError(false);
   }, [coverSrc]);
 
@@ -141,18 +181,17 @@ export default function Player() {
       audio.pause();
       audio.src = audioUrl;
       audio.load();
-      setCurrentTime(0);
-      setDuration(0);
+      setPlaybackProgress(0, 0);
     }
 
     if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
-      setDuration(audio.duration || 0);
+      setPlaybackProgress(audio.currentTime || 0, audio.duration || 0);
     }
 
     void audio.play().catch(() => {
       setPlayingState(false);
     });
-  }, [audioRef, audioUrl, setPlayingState]);
+  }, [audioRef, audioUrl, setPlaybackProgress, setPlayingState]);
 
   useEffect(() => {
     const element = audioRef.current;
@@ -160,8 +199,7 @@ export default function Player() {
     const audio = element;
 
     function syncTimeState() {
-      setCurrentTime(audio.currentTime || 0);
-      setDuration(audio.duration || 0);
+      setPlaybackProgress(audio.currentTime || 0, audio.duration || 0);
     }
 
     function handleTimeUpdate() {
@@ -185,11 +223,12 @@ export default function Player() {
     function handleEnded() {
       if (playMode === "repeat-one") {
         audio.currentTime = 0;
+        syncTimeState();
         void audio.play().catch(() => setPlayingState(false));
         return;
       }
-      setCurrentTime(0);
       setPlayingState(false);
+      setPlaybackProgress(0, audio.duration || 0);
       next();
     }
 
@@ -210,21 +249,21 @@ export default function Player() {
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [audioRef, audioUrl, next, playMode, setPlayingState]);
+  }, [audioRef, audioUrl, next, playMode, setPlaybackProgress, setPlayingState]);
 
   useEffect(() => {
-    if (!isQueueOpen) return;
+    if (!openPanel) return;
 
     function handlePointerDown(event: MouseEvent | TouchEvent) {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (playerBarRef.current?.contains(target)) return;
-      setIsQueueOpen(false);
+      setOpenPanel(null);
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        setIsQueueOpen(false);
+        setOpenPanel(null);
       }
     }
 
@@ -237,13 +276,13 @@ export default function Player() {
       document.removeEventListener("touchstart", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isQueueOpen]);
+  }, [openPanel]);
 
   useEffect(() => {
-    if (queue.length === 0) {
-      setIsQueueOpen(false);
+    if (queue.length === 0 && isQueueOpen) {
+      setOpenPanel(null);
     }
-  }, [queue.length]);
+  }, [isQueueOpen, queue.length]);
 
   useEffect(() => {
     if (!isQueueOpen) return;
@@ -252,6 +291,74 @@ export default function Player() {
       currentQueueItem.scrollIntoView({ block: "nearest" });
     }
   }, [currentIndex, isQueueOpen]);
+
+  useEffect(() => {
+    if (!currentSong && isLyricsOpen) {
+      setOpenPanel(null);
+    }
+  }, [currentSong, isLyricsOpen]);
+
+  useEffect(() => {
+    if (!isLyricsOpen) return;
+    const songMid = currentSong?.mid;
+    if (!songMid) {
+      setLyricState({ mid: null, status: "idle", parsed: null, message: null });
+      return;
+    }
+
+    const cached = lyricCacheRef.current.get(songMid);
+    if (cached) {
+      setLyricState({ mid: songMid, ...cached });
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    setLyricState({ mid: songMid, status: "loading", parsed: null, message: null });
+
+    void apiQqLyric(songMid, { trans: true }, controller.signal)
+      .then((payload) => {
+        if (cancelled) return;
+        const parsed = parseLyrics(payload);
+        const nextState: CachedLyricEntry = parsed.lines.length > 0
+          ? { status: "ready", parsed, message: null }
+          : { status: "empty", parsed, message: null };
+        lyricCacheRef.current.set(songMid, nextState);
+        setLyricState({ mid: songMid, ...nextState });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const errorName = typeof error === "object" && error && "name" in error
+          ? (error as { name?: string }).name
+          : null;
+        if (errorName === "AbortError") return;
+        setLyricState({
+          mid: songMid,
+          status: "error",
+          parsed: null,
+          message: error instanceof Error ? error.message : "歌词加载失败",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [currentSong?.mid, isLyricsOpen]);
+
+  const activeLyricLineIndex = useMemo(() => {
+    if (!lyricState.parsed?.timed) return -1;
+    return getActiveLyricLineIndex(lyricState.parsed.lines, currentTime * 1000);
+  }, [currentTime, lyricState.parsed]);
+
+  useEffect(() => {
+    if (!isLyricsOpen || activeLyricLineIndex < 0) return;
+    const activeLyricLine = activeLyricLineRef.current;
+    if (activeLyricLine && typeof activeLyricLine.scrollIntoView === "function") {
+      activeLyricLine.scrollIntoView({ block: "center" });
+    }
+  }, [activeLyricLineIndex, isLyricsOpen]);
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
   const queueSourceLabel = queueSource ? queueSourceLabels[queueSource] : "当前播放";
@@ -319,12 +426,54 @@ export default function Player() {
     );
   }
 
-  function handleProgressClick(e: React.MouseEvent<HTMLDivElement>) {
-    const audio = audioRef.current;
-    if (!audio || !duration) return;
+  function handleProgressClick(e: ReactMouseEvent<HTMLDivElement>) {
+    if (!duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audio.currentTime = ratio * duration;
+    seekTo(ratio * duration);
+  }
+
+  function renderLyricContent() {
+    if (!currentSong) {
+      return <div className="player-lyrics-empty">当前没有正在播放的歌曲</div>;
+    }
+
+    if (lyricState.status === "loading") {
+      return (
+        <div className="player-lyrics-empty player-lyrics-status">
+          <span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} />
+          <span>正在加载歌词…</span>
+        </div>
+      );
+    }
+
+    if (lyricState.status === "error") {
+      return <div className="player-lyrics-empty">{lyricState.message ?? "歌词加载失败"}</div>;
+    }
+
+    if (!lyricState.parsed || lyricState.parsed.lines.length === 0 || lyricState.status === "empty") {
+      return <div className="player-lyrics-empty">这首歌暂无可显示的歌词</div>;
+    }
+
+    return (
+      <div className={`player-lyrics-list ${lyricState.parsed.timed ? "" : "player-lyrics-list-plain"}`}>
+        {lyricState.parsed.lines.map((line, index) => {
+          const isActive = index === activeLyricLineIndex;
+          return (
+            <div
+              key={line.key}
+              ref={isActive ? activeLyricLineRef : undefined}
+              className={`player-lyric-line ${isActive ? "player-lyric-line-active" : ""}`}
+            >
+              <div className="player-lyric-line-text">{line.text}</div>
+              {line.transText ? (
+                <div className="player-lyric-line-trans">{line.transText}</div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   if (!currentSong && !loadingMid && !errorMsg) return null;
@@ -336,7 +485,7 @@ export default function Player() {
       </div>
       <div className="player-shell">
         {isQueueOpen && queue.length > 0 ? (
-          <div className="player-queue-drawer" id="player-queue-panel" role="dialog" aria-label="待播队列">
+          <div className="player-queue-drawer" id={queuePanelId} role="dialog" aria-label="待播队列">
             <div className="player-queue-header">
               <div>
                 <div className="player-queue-title">待播队列</div>
@@ -347,7 +496,7 @@ export default function Player() {
               <button
                 className="btn btn-danger-ghost btn-sm"
                 onClick={() => {
-                  setIsQueueOpen(false);
+                  setOpenPanel(null);
                   clearQueue();
                 }}
               >
@@ -378,6 +527,30 @@ export default function Player() {
               ) : (
                 <div className="player-queue-empty">队列里还没有其他歌曲</div>
               )}
+            </div>
+          </div>
+        ) : null}
+
+        {isLyricsOpen ? (
+          <div className="player-queue-drawer player-lyrics-drawer" id={lyricsPanelId} role="dialog" aria-label="当前歌词">
+            <div className="player-queue-header">
+              <div>
+                <div className="player-queue-title">当前歌词</div>
+                <div className="player-queue-subtitle">
+                  {currentSong?.title ?? "当前播放"}
+                  {currentSong?.singer ? ` · ${currentSong.singer}` : ""}
+                </div>
+              </div>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setOpenPanel(null)}
+              >
+                收起
+              </button>
+            </div>
+
+            <div className="player-lyrics-content">
+              {renderLyricContent()}
             </div>
           </div>
         ) : null}
@@ -427,17 +600,7 @@ export default function Player() {
 
             <button
               className="play-btn"
-              onClick={() => {
-                const audio = audioRef.current;
-                if (!audio) return;
-                if (audio.paused) {
-                  void audio.play().catch(() => {
-                    setPlayingState(false);
-                  });
-                } else {
-                  audio.pause();
-                }
-              }}
+              onClick={togglePlayPause}
               title={playing ? "暂停" : "播放"}
             >
               {loadingMid ? (
@@ -461,12 +624,24 @@ export default function Player() {
 
           <div className="player-audio-wrap">
             <span className="player-time">{formatTime(currentTime)} / {formatTime(duration)}</span>
+            {currentSong ? (
+              <button
+                className={`player-queue-toggle ${isLyricsOpen ? "player-queue-toggle-active" : ""}`}
+                onClick={() => setOpenPanel((panel) => panel === "lyrics" ? null : "lyrics")}
+                aria-expanded={isLyricsOpen}
+                aria-controls={lyricsPanelId}
+                title="查看当前歌词"
+              >
+                <LyricsIcon />
+                <span>歌词</span>
+              </button>
+            ) : null}
             {queue.length > 0 ? (
               <button
                 className={`player-queue-toggle ${isQueueOpen ? "player-queue-toggle-active" : ""}`}
-                onClick={() => setIsQueueOpen((open) => !open)}
+                onClick={() => setOpenPanel((panel) => panel === "queue" ? null : "queue")}
                 aria-expanded={isQueueOpen}
-                aria-controls="player-queue-panel"
+                aria-controls={queuePanelId}
                 title="查看待播队列"
               >
                 <QueueIcon />
@@ -474,7 +649,7 @@ export default function Player() {
               </button>
             ) : null}
             <audio
-              ref={audioRef as React.RefObject<HTMLAudioElement>}
+              ref={audioRef}
               onEmptied={() => setPlayingState(false)}
               style={{ display: "none" }}
             />

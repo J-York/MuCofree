@@ -18,6 +18,7 @@ import {
 import {
   createQqMusicClient,
   qqCover,
+  qqLyric,
   qqPlaylist,
   qqSearch,
   qqSongUrl,
@@ -248,6 +249,45 @@ function parseIntParam(v: string): number {
   const n = Number.parseInt(v, 10);
   if (!Number.isFinite(n)) throw httpError(400, "Invalid id");
   return n;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function pickText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.trim() ? value : null;
+}
+
+function detectQqLyricFormat(value: string | null): "lrc" | "qrc" | "plain" {
+  if (!value) return "plain";
+  const trimmed = value.trim();
+  if (!trimmed) return "plain";
+  if (/<(?:QrcInfos|Lyric_1)\b/.test(trimmed) || /^\[\d+,\d+\]/m.test(trimmed)) {
+    return "qrc";
+  }
+  if (/^\[\d{1,2}:\d{2}(?:[.:]\d{1,3})?]/m.test(trimmed)) {
+    return "lrc";
+  }
+  return "plain";
+}
+
+function normalizeQqLyricPayload(payload: unknown) {
+  const root = asRecord(payload);
+  const data = asRecord(root.data);
+  const nestedData = asRecord(data.data);
+  const source = Object.keys(nestedData).length > 0 ? nestedData : data;
+  const lyric = pickText(source.lyric);
+  const trans = pickText(source.trans);
+  const roma = pickText(source.roma);
+
+  return {
+    lyric,
+    trans,
+    roma,
+    format: detectQqLyricFormat(lyric),
+  };
 }
 
 function mapUser(row: UserRow) {
@@ -1201,6 +1241,36 @@ export function createApp(db: Db, qqBaseUrl: string, corsOrigin: string, session
       });
 
       res.json(payload);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.get("/api/qq/lyric", requireAuth, async (req, res, next) => {
+    try {
+      const query = z
+        .object({
+          mid: z.string().trim().min(1).max(50).optional(),
+          id: z.coerce.number().int().positive().optional(),
+          qrc: z.coerce.number().int().min(0).max(1).optional(),
+          trans: z.coerce.number().int().min(0).max(1).optional(),
+          roma: z.coerce.number().int().min(0).max(1).optional(),
+        })
+        .refine((value) => Boolean(value.mid || value.id != null), {
+          message: "mid or id is required",
+          path: ["mid"],
+        })
+        .parse(req.query);
+
+      const payload = await qqLyric(qq, {
+        mid: query.mid,
+        id: query.id,
+        qrc: query.qrc as 0 | 1 | undefined,
+        trans: query.trans as 0 | 1 | undefined,
+        roma: query.roma as 0 | 1 | undefined,
+      });
+
+      res.json(normalizeQqLyricPayload(payload));
     } catch (e) {
       next(e);
     }

@@ -17,6 +17,8 @@ type PlayerState = {
   currentSong: PlayerSong | null;
   playing: boolean;
   audioUrl: string | null;
+  currentTime: number;
+  duration: number;
   loadingMid: string | null;
   errorMsg: string | null;
   playMode: PlayMode;
@@ -33,10 +35,12 @@ type PlayerState = {
   prev: () => void;
   clearQueue: () => void;
   setPlayingState: (value: boolean) => void;
+  setPlaybackProgress: (currentTime: number, duration: number) => void;
+  seekTo: (time: number) => void;
   isCurrentSong: (mid: string) => boolean;
   togglePlayPause: () => void;
   cyclePlayMode: () => void;
-  audioRef: React.RefObject<HTMLAudioElement | null>;
+  audioRef: React.RefObject<HTMLAudioElement>;
 };
 
 
@@ -62,6 +66,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [currentIndex, setCurrentIndex] = useState(-1);
   const [playing, setPlaying] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [loadingMid, setLoadingMid] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [playMode, setPlayMode] = useState<PlayMode>("sequential");
@@ -69,12 +75,37 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const playModeRef = useRef<PlayMode>("sequential");
   const queueSourceRef = useRef<QueueSource>(null);
   const queueSourceKeyRef = useRef<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const shuffleOrderRef = useRef<number[]>([]);
   const shufflePositionRef = useRef(-1);
   const shuffleHistoryRef = useRef<number[]>([]);
   const playbackRequestIdRef = useRef(0);
   const currentSong = currentIndex >= 0 ? queue[currentIndex] ?? null : null;
+
+  const resetPlaybackProgress = useCallback(() => {
+    setCurrentTime(0);
+    setDuration(0);
+  }, []);
+
+  const setPlaybackProgress = useCallback((nextCurrentTime: number, nextDuration: number) => {
+    setCurrentTime(Number.isFinite(nextCurrentTime) && nextCurrentTime > 0 ? nextCurrentTime : 0);
+    setDuration(Number.isFinite(nextDuration) && nextDuration > 0 ? nextDuration : 0);
+  }, []);
+
+  const seekTo = useCallback((nextTime: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const durationSeconds = Number.isFinite(audio.duration) && audio.duration > 0
+      ? audio.duration
+      : Number.POSITIVE_INFINITY;
+    const safeTime = Math.max(0, Math.min(nextTime, durationSeconds));
+    audio.currentTime = safeTime;
+    setCurrentTime(audio.currentTime || safeTime);
+    setDuration((prevDuration) =>
+      Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : prevDuration,
+    );
+  }, []);
 
   const resetShuffleState = useCallback((targetIndex: number, nextQueueLength: number) => {
     if (nextQueueLength <= 0 || targetIndex < 0 || targetIndex >= nextQueueLength) {
@@ -125,6 +156,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     playbackRequestIdRef.current = requestId;
     setLoadingMid(song.mid);
     setPlaying(false);
+    resetPlaybackProgress();
     setErrorMsg(null);
     try {
       const url = await apiQqSongUrl(song.mid);
@@ -145,7 +177,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setLoadingMid(null);
       }
     }
-  }, []);
+  }, [resetPlaybackProgress]);
 
   const play = useCallback((song: PlayerSong, extraQueue?: PlayerSong[], source?: QueueSource, sourceKey?: string | null) => {
     const newQueue = extraQueue ?? [song];
@@ -275,6 +307,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         queueSourceKeyRef.current = null;
         setQueueSource(null);
         setAudioUrl(null);
+        resetPlaybackProgress();
         setLoadingMid(null);
         setErrorMsg(null);
         setPlaying(false);
@@ -284,7 +317,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       return nextQueue;
     });
-  }, [currentIndex, ensureShuffleState, fetchAndPlay, loadingMid, resetShuffleState]);
+  }, [currentIndex, ensureShuffleState, fetchAndPlay, loadingMid, resetPlaybackProgress, resetShuffleState]);
 
   const removeFromPlaylistQueue = useCallback((songMid: string, playlistId?: string | null) => {
     if (queueSourceRef.current !== "playlist") return;
@@ -380,10 +413,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setQueue([]);
     setCurrentIndex(-1);
     setAudioUrl(null);
+    resetPlaybackProgress();
     setLoadingMid(null);
     setErrorMsg(null);
     setPlaying(false);
-  }, [resetShuffleState]);
+  }, [resetPlaybackProgress, resetShuffleState]);
 
   const isCurrentSong = useCallback((mid: string) => currentSong?.mid === mid, [currentSong]);
 
@@ -418,6 +452,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       currentSong,
       playing,
       audioUrl,
+      currentTime,
+      duration,
       loadingMid,
       errorMsg,
       playMode,
@@ -434,6 +470,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       prev,
       clearQueue,
       setPlayingState: setPlaying,
+      setPlaybackProgress,
+      seekTo,
       isCurrentSong,
       togglePlayPause,
       cyclePlayMode,
@@ -446,7 +484,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       canPrev,
       clearQueue,
       currentIndex,
+      currentTime,
       currentSong,
+      duration,
       enqueue,
       errorMsg,
       loadingMid,
@@ -461,7 +501,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       appendToPlaylistQueue,
       removeFromQueue,
       removeFromPlaylistQueue,
+      seekTo,
       setPlaying,
+      setPlaybackProgress,
       togglePlayPause,
       cyclePlayMode,
       isCurrentSong,
