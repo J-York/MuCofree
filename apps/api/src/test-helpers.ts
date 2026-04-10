@@ -5,9 +5,9 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 export function createCsrfAgent(app: Parameters<typeof request.agent>[0]) {
   const agent = request.agent(app);
   let csrfToken: string | null = null;
+  type AgentRequest = import("superagent").Request;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  agent.use((req: any) => {
+  agent.use((req: AgentRequest) => {
     const method = (req.method ?? "GET").toUpperCase();
     if (SAFE_METHODS.has(method)) return;
     if (csrfToken) {
